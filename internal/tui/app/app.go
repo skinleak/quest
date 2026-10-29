@@ -23,20 +23,17 @@ import (
 // Layout constants, in cells.
 const (
 	padX         = 2  // left and right margin of the frame
-	paneGap      = 3  // between side-by-side panes
 	chromeHeight = 5  // blank, header, blank above the body; blank, footer below
 	minWidth     = 40 // below this, only a "too small" note is shown
 	minHeight    = 10
-	wideWidth    = 80 // inner width from which the sidebar sits beside the panes
-	minSidebar   = 22
-	maxSidebar   = 34
 )
 
+// pane is a focus stop; tab moves through them in this order.
 type pane int
 
 const (
-	paneSidebar pane = iota
-	paneRequest
+	paneMethod pane = iota
+	paneURL
 	paneResponse
 	paneCount
 )
@@ -50,10 +47,8 @@ type Model struct {
 
 	width, height int
 	focus         pane
-	sidebarOn     bool
 	showHelp      bool
 
-	sidebar  components.Sidebar
 	editor   components.Editor
 	response components.Response
 	help     components.Help
@@ -70,14 +65,13 @@ type Model struct {
 func New(eng *engine.Engine, log *slog.Logger) Model {
 	st := theme.Default()
 	m := Model{
-		engine:    eng,
-		log:       log,
-		styles:    st,
-		keys:      keys.Default(),
-		focus:     paneRequest,
-		sidebarOn: true,
-		editor:    components.NewEditor(st),
-		help:      components.NewHelp(st),
+		engine: eng,
+		log:    log,
+		styles: st,
+		keys:   keys.Default(),
+		focus:  paneURL,
+		editor: components.NewEditor(st),
+		help:   components.NewHelp(st),
 	}
 	m.editor.Focus()
 	return m
@@ -133,20 +127,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.Send):
 		return m, m.send()
 	case key.Matches(msg, k.Method):
-		m.editor.NextMethod()
+		m.editor.MoveMethod(1)
 		return m, nil
 	case key.Matches(msg, k.NextPane):
-		return m, m.cycleFocus(1)
+		return m, m.setFocus((m.focus + 1) % paneCount)
 	case key.Matches(msg, k.PrevPane):
-		return m, m.cycleFocus(-1)
-	case key.Matches(msg, k.Sidebar):
-		return m, m.toggleSidebar()
+		return m, m.setFocus((m.focus + paneCount - 1) % paneCount)
 	case key.Matches(msg, k.InputHelp):
 		m.openHelp()
 		return m, nil
 	}
 
-	if m.focus == paneRequest {
+	if m.focus == paneURL {
 		if key.Matches(msg, k.Submit) {
 			return m, m.send()
 		}
@@ -158,10 +150,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.quit()
 	case key.Matches(msg, k.Help):
 		m.openHelp()
+	case m.focus == paneMethod:
+		return m, m.handleMethodKey(msg)
 	case m.focus == paneResponse:
 		m.handleResponseKey(msg)
 	}
 	return m, nil
+}
+
+func (m *Model) handleMethodKey(msg tea.KeyMsg) tea.Cmd {
+	k := m.keys
+	switch {
+	case key.Matches(msg, k.PrevMethod):
+		m.editor.MoveMethod(-1)
+	case key.Matches(msg, k.NextMethod):
+		m.editor.MoveMethod(1)
+	case key.Matches(msg, k.EditURL):
+		return m.setFocus(paneURL)
+	}
+	return nil
 }
 
 func (m *Model) handleResponseKey(msg tea.KeyMsg) {
@@ -232,40 +239,12 @@ func (m *Model) openHelp() {
 	m.help.Reset()
 }
 
-// cycleFocus moves focus by delta panes, skipping the sidebar when it is
-// off.
-func (m *Model) cycleFocus(delta int) tea.Cmd {
-	next := m.focus
-	for {
-		next = (next + pane(delta) + paneCount) % paneCount
-		if next != paneSidebar || m.sidebarOn {
-			break
-		}
-	}
-	return m.setFocus(next)
-}
-
 func (m *Model) setFocus(p pane) tea.Cmd {
 	m.focus = p
-	if p == paneRequest {
+	if p == paneURL {
 		return m.editor.Focus()
 	}
 	m.editor.Blur()
-	return nil
-}
-
-// toggleSidebar shows or hides the sidebar. In a narrow window it never
-// sits beside the panes: it is shown alone while it has focus, so turning
-// it on focuses it.
-func (m *Model) toggleSidebar() tea.Cmd {
-	m.sidebarOn = !m.sidebarOn
-	m.resize()
-	switch {
-	case !m.sidebarOn && m.focus == paneSidebar:
-		return m.setFocus(paneRequest)
-	case m.sidebarOn && !m.wide():
-		return m.setFocus(paneSidebar)
-	}
 	return nil
 }
 
@@ -277,35 +256,16 @@ func (m *Model) setMessage(info string, err error) {
 	m.message, m.isErr = info, false
 }
 
-func (m Model) innerWidth() int     { return max(1, m.width-2*padX) }
-func (m Model) bodyHeight() int     { return max(1, m.height-chromeHeight) }
-func (m Model) wide() bool          { return m.innerWidth() >= wideWidth }
-func (m Model) tooSmall() bool      { return m.width < minWidth || m.height < minHeight }
-func (m Model) sidebarBeside() bool { return m.sidebarOn && m.wide() }
-
-// layout is the width of the sidebar and of the request and response
-// column. A zero width means the part is not shown.
-func (m Model) layout() (sideW, mainW int) {
-	w := m.innerWidth()
-	switch {
-	case m.sidebarBeside():
-		sideW = min(max(w/4, minSidebar), maxSidebar)
-		return sideW, w - sideW - paneGap
-	case m.focus == paneSidebar:
-		return w, 0
-	}
-	return 0, w
-}
+func (m Model) innerWidth() int { return max(1, m.width-2*padX) }
+func (m Model) bodyHeight() int { return max(1, m.height-chromeHeight) }
+func (m Model) tooSmall() bool  { return m.width < minWidth || m.height < minHeight }
 
 // resize sizes the panes for the current window.
 func (m *Model) resize() {
-	_, mainW := m.layout()
-	if mainW == 0 {
-		mainW = m.innerWidth() // keep the column sized while the sidebar covers it
-	}
-	m.editor.SetWidth(mainW)
+	w := m.innerWidth()
+	m.editor.SetWidth(w)
 	// The editor, a blank line, then the response.
-	m.response.SetHeight(max(0, m.bodyHeight()-components.EditorHeight-1))
+	m.response.SetSize(w, max(0, m.bodyHeight()-components.EditorHeight-1))
 }
 
 // View implements tea.Model. The frame is assembled line by line from
@@ -324,7 +284,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		body = m.help.Overlay(m.styles, m.keys.FullHelp(), m.innerWidth(), bodyH)
 	} else {
-		body = m.bodyLines(bodyH)
+		body = m.bodyLines()
 	}
 
 	margin := strings.Repeat(" ", padX)
@@ -353,41 +313,19 @@ func (m Model) View() string {
 	return b.String()
 }
 
-// bodyLines renders the sidebar and the request and response column.
-func (m Model) bodyLines(height int) []string {
-	sideW, mainW := m.layout()
-	var side, main []string
-	if sideW > 0 {
-		side = m.sidebar.View(m.styles, sideW, height, m.focus == paneSidebar)
+// bodyLines renders the request editor above the response.
+func (m Model) bodyLines() []string {
+	w := m.innerWidth()
+	focus := components.EditorBlurred
+	switch m.focus {
+	case paneMethod:
+		focus = components.EditorMethod
+	case paneURL:
+		focus = components.EditorURL
 	}
-	if mainW > 0 {
-		main = m.editor.View(m.styles, mainW, m.focus == paneRequest)
-		main = append(main, "")
-		main = append(main, m.response.View(m.styles, mainW, m.focus == paneResponse)...)
-	}
-	switch {
-	case mainW == 0:
-		return side
-	case sideW == 0:
-		return main
-	}
-	gap := strings.Repeat(" ", paneGap)
-	out := make([]string, height)
-	for i := range out {
-		var s, r string
-		if i < len(side) {
-			s = side[i]
-		}
-		if i < len(main) {
-			r = main[i]
-		}
-		if r == "" {
-			out[i] = s
-			continue
-		}
-		out[i] = components.Fit(s, sideW, true) + gap + r
-	}
-	return out
+	out := m.editor.View(m.styles, w, focus)
+	out = append(out, "")
+	return append(out, m.response.View(m.styles, w, m.focus == paneResponse)...)
 }
 
 func (m Model) headerView() string {
@@ -405,12 +343,12 @@ func (m Model) footerView() string {
 		return m.help.Hints(m.keys.SendingHelp(), w)
 	}
 	switch m.focus {
-	case paneRequest:
+	case paneMethod:
+		return m.help.Hints(m.keys.MethodHelp(), w)
+	case paneURL:
 		return m.help.Hints(m.keys.URLHelp(), w)
-	case paneResponse:
-		return m.help.Hints(m.keys.ResponseHelp(), w)
 	}
-	return m.help.Hints(m.keys.SidebarHelp(), w)
+	return m.help.Hints(m.keys.ResponseHelp(), w)
 }
 
 // tooSmallView replaces the frame in a window below the minimum size.

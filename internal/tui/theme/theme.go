@@ -56,11 +56,10 @@ func DefaultPalette() Palette {
 // Icons are the few symbols the UI draws. Plain Unicode only, so no
 // special font is needed.
 const (
-	IconCollapsed = "▸"
-	IconExpanded  = "▾"
-	IconSep       = "·"
-	IconBar       = "━"
-	IconEllipsis  = "…"
+	IconSep      = "·"
+	IconBar      = "━"
+	IconEllipsis = "…"
+	IconArrow    = "→"
 )
 
 // Styles are the concrete Lip Gloss styles derived from a Palette.
@@ -180,6 +179,12 @@ func (s Styles) Method(m string) lipgloss.Style {
 		return s.MethodDelete
 	}
 	return s.MethodOther
+}
+
+// MethodPicked is the active method while the method row has focus:
+// underlined, so the focus shows without color too.
+func (s Styles) MethodPicked(m string) lipgloss.Style {
+	return s.Method(m).Underline(true)
 }
 
 // Status returns the style for an HTTP status code.

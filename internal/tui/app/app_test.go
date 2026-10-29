@@ -58,8 +58,6 @@ func keyPress(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyTab}
 	case "shift+tab":
 		return tea.KeyMsg{Type: tea.KeyShiftTab}
-	case "ctrl+b":
-		return tea.KeyMsg{Type: tea.KeyCtrlB}
 	case "ctrl+c":
 		return tea.KeyMsg{Type: tea.KeyCtrlC}
 	case "ctrl+s":
@@ -121,6 +119,72 @@ func TestMethodCycles(t *testing.T) {
 	m = pump(t, m, keyPress("ctrl+t"))
 	if r := m.editor.Request(); r.Method != http.MethodPost {
 		t.Errorf("method = %s, want POST", r.Method)
+	}
+}
+
+func TestMethodRow(t *testing.T) {
+	m := newTestModel(t)
+	if v := plainView(m); !strings.Contains(v, "GET  POST  PUT  PATCH  DELETE  HEAD  OPTIONS") {
+		t.Fatalf("methods not all in view:\n%s", v)
+	}
+	m = pump(t, m, keyPress("shift+tab")) // URL → method row
+	if m.focus != paneMethod {
+		t.Fatalf("focus = %d, want the method row", m.focus)
+	}
+	for _, k := range []string{"l", "l", "l", "h"} {
+		m = pump(t, m, keyPress(k))
+	}
+	if r := m.editor.Request(); r.Method != http.MethodPut {
+		t.Errorf("method = %s, want PUT", r.Method)
+	}
+	m = pump(t, m, keyPress("h"))
+	m = pump(t, m, keyPress("h"))
+	if r := m.editor.Request(); r.Method != http.MethodGet {
+		t.Errorf("method = %s, want GET", r.Method)
+	}
+	m = pump(t, m, keyPress("h")) // wraps around
+	if r := m.editor.Request(); r.Method != http.MethodOptions {
+		t.Errorf("method = %s, want OPTIONS", r.Method)
+	}
+	m = pump(t, m, keyPress("enter"))
+	m = typeText(t, m, "lh")
+	if m.focus != paneURL || m.editor.Request().URL != "lh" {
+		t.Errorf("enter should move to the url: focus %d, url %q", m.focus, m.editor.Request().URL)
+	}
+}
+
+func TestMethodRowNarrow(t *testing.T) {
+	m := newTestModel(t)
+	m = pump(t, m, keyPress("ctrl+t"))
+	for _, tt := range []struct {
+		width int
+		want  string
+	}{
+		{48, "GET  POST  PUT  PATCH  DELETE  HEAD  OPTIONS"},
+		{42, "GET POST PUT PATCH DELETE HEAD OPTIONS"},
+		{40, "POST"},
+	} {
+		m = pump(t, m, tea.WindowSizeMsg{Width: tt.width, Height: 20})
+		row := strings.Split(plainView(m), "\n")[4]
+		if strings.TrimSpace(row) != tt.want {
+			t.Errorf("width %d: row %q, want %q", tt.width, row, tt.want)
+		}
+	}
+}
+
+func TestFooterHints(t *testing.T) {
+	m := newTestModel(t)
+	m = pump(t, m, keyPress("tab")) // response pane
+	footer := plainView(m)[strings.LastIndex(plainView(m), "\n")+1:]
+	for _, want := range []string{"send", "next tab", "help", "quit"} {
+		if !strings.Contains(footer, want) {
+			t.Errorf("footer misses %q: %q", want, footer)
+		}
+	}
+	for _, unwanted := range []string{"page", "down", "up"} {
+		if strings.Contains(footer, unwanted) {
+			t.Errorf("footer still has %q: %q", unwanted, footer)
+		}
 	}
 }
 
@@ -202,23 +266,6 @@ func TestStaleResponseIsDropped(t *testing.T) {
 	}
 }
 
-func TestSidebarToggle(t *testing.T) {
-	m := newTestModel(t)
-	if !strings.Contains(plainView(m), "collections") {
-		t.Fatal("sidebar hidden in a wide window")
-	}
-	m = pump(t, m, keyPress("ctrl+b"))
-	if strings.Contains(plainView(m), "collections") {
-		t.Error("ctrl+b did not hide the sidebar")
-	}
-	m = pump(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
-	m = pump(t, m, keyPress("ctrl+b"))
-	v := plainView(m)
-	if !strings.Contains(v, "collections") || strings.Contains(v, "request") {
-		t.Errorf("narrow sidebar should cover the panes:\n%s", v)
-	}
-}
-
 func TestViewFitsWindow(t *testing.T) {
 	srv := jsonServer(t, `{"items":[`+strings.Repeat(`{"id":1,"name":"a long name that will not fit a narrow window"},`, 200)+`{}]}`)
 	base := newTestModel(t)
@@ -232,7 +279,7 @@ func TestViewFitsWindow(t *testing.T) {
 		"scrolled": func() Model { return pump(t, pump(t, loaded, keyPress("tab")), keyPress("G")) },
 		"headers":  func() Model { return pump(t, pump(t, loaded, keyPress("tab")), keyPress("l")) },
 		"timing":   func() Model { return pump(t, pump(t, loaded, keyPress("tab")), keyPress("h")) },
-		"sidebar":  func() Model { return pump(t, base, keyPress("shift+tab")) },
+		"method":   func() Model { return pump(t, base, keyPress("shift+tab")) },
 		"error": func() Model {
 			m := typeText(t, newTestModel(t), "http://127.0.0.1:1/")
 			return pump(t, m, keyPress("enter"))

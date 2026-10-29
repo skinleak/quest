@@ -3,6 +3,7 @@ package components
 import (
 	"context"
 	"errors"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,8 +30,15 @@ var tabNames = []string{"body", "headers", "timing"}
 const responseChrome = 3
 
 // maxHeaderName caps the header name column so one long name can't push
-// every value off screen.
+// every value off screen; longer names are cut.
 const maxHeaderName = 28
+
+// minWrap is the narrowest value column header values are wrapped into;
+// below it they are cut instead.
+const minWrap = 16
+
+// labelW is the label column of the timing tab.
+const labelW = 11
 
 type responseState int
 
@@ -45,15 +53,18 @@ const (
 // timing in a scrollable window. Only visible lines are rendered, and body
 // lines are highlighted chunk by chunk as they scroll into view.
 type Response struct {
-	state   responseState
-	prev    responseState // the state before sending, restored on cancel
-	resp    *request.Response
-	err     string
-	doc     *format.Doc
-	headers []string
-	tab     int
-	offset  [tabCount]int
-	height  int // lines of the whole pane
+	state  responseState
+	prev   responseState // the state before sending, restored on cancel
+	resp   *request.Response
+	err    string
+	doc    *format.Doc
+	media  string             // the media type, without parameters
+	lines  [tabCount][]string // headers and timing, laid out for width
+	tab    int
+	offset [tabCount]int
+	width  int
+	height int // lines of the whole pane
+	styles theme.Styles
 }
 
 // SetSending shows that a request is in flight. The previous response
@@ -80,16 +91,33 @@ func (r *Response) SetResult(st theme.Styles, resp *request.Response, doc *forma
 		return
 	}
 	r.state, r.resp, r.doc, r.err = stateDone, resp, doc, ""
-	r.headers = headerLines(st, resp)
+	r.styles = st
+	r.media, _, _ = strings.Cut(resp.ContentType, ";")
+	r.media = format.Sanitize(strings.TrimSpace(r.media))
 	r.offset = [tabCount]int{}
+	r.layout()
 	r.prepare()
+}
+
+// layout renders the headers and timing tabs for the pane's width, so
+// View only reads.
+func (r *Response) layout() {
+	if r.resp == nil {
+		return
+	}
+	r.lines[TabHeaders] = headerLines(r.styles, r.resp.Header, r.width)
+	r.lines[TabTiming] = timingLines(r.styles, r.resp, r.width, time.Now())
 }
 
 // Sending reports whether a request is in flight.
 func (r *Response) Sending() bool { return r.state == stateSending }
 
-// SetHeight sets the pane's height.
-func (r *Response) SetHeight(h int) {
+// SetSize sets the pane's width and height.
+func (r *Response) SetSize(w, h int) {
+	if w != r.width {
+		r.width = w
+		r.layout()
+	}
 	r.height = h
 	r.scroll(0)
 }
@@ -135,17 +163,10 @@ func (r *Response) lineCount() int {
 	if r.resp == nil {
 		return 0
 	}
-	switch r.tab {
-	case TabBody:
+	if r.tab == TabBody {
 		return r.doc.Len()
-	case TabHeaders:
-		return len(r.headers)
 	}
-	n := len(timingRows)
-	if r.resp.Timing.Reused {
-		n += 2
-	}
-	return n
+	return len(r.lines[r.tab])
 }
 
 // View renders the pane into at most its height lines.
@@ -176,15 +197,12 @@ func (r *Response) View(st theme.Styles, width int, focused bool) []string {
 		for i := off; i < min(off+h, r.doc.Len()); i++ {
 			out = append(out, Fit(r.doc.Line(i), width, false))
 		}
-	case TabHeaders:
-		off := r.offset[TabHeaders]
-		for _, l := range r.headers[off:min(off+h, len(r.headers))] {
+	default:
+		lines := r.lines[r.tab]
+		off := min(r.offset[r.tab], len(lines))
+		for _, l := range lines[off:min(off+h, len(lines))] {
 			out = append(out, Fit(l, width, false))
 		}
-	case TabTiming:
-		rows := timingLines(st, r.resp.Timing, width)
-		off := min(r.offset[TabTiming], len(rows))
-		out = append(out, rows[off:min(off+h, len(rows))]...)
 	}
 	return out
 }
@@ -207,6 +225,9 @@ func (r *Response) statusLine(st theme.Styles, width int) string {
 	}
 	if resp.Truncated {
 		parts = append(parts, st.Warning.Render("cut at "+FormatSize(resp.Size)))
+	}
+	if r.media != "" {
+		parts = append(parts, st.Muted.Render(r.media))
 	}
 	var pos string
 	if n, h := r.lineCount(), r.contentHeight(); n > h && h > 0 {
@@ -246,65 +267,128 @@ func Tabs(st theme.Styles, names []string, active int) string {
 	return b.String()
 }
 
-// headerLines renders the headers sorted by name, one line per value,
-// with the values aligned.
-func headerLines(st theme.Styles, resp *request.Response) []string {
-	names := make([]string, 0, len(resp.Header))
+// headerLines renders the headers sorted by name, one per value, with
+// the values aligned. Long values wrap under themselves, so cookies and
+// policies can be read in full.
+func headerLines(st theme.Styles, header http.Header, width int) []string {
+	names := make([]string, 0, len(header))
 	nameW := 0
-	for n := range resp.Header {
+	for n := range header {
 		names = append(names, n)
 		nameW = max(nameW, len(n))
 	}
 	slices.Sort(names)
 	nameW = min(nameW, maxHeaderName)
+	valW := width - nameW - 2
+	indent := strings.Repeat(" ", nameW+2)
 	key, val := theme.PaintOf(st.HeaderKey), theme.PaintOf(st.Text)
 	var out []string
 	for _, n := range names {
-		label := format.Sanitize(n)
-		if pad := nameW - len(label); pad > 0 {
-			label += strings.Repeat(" ", pad)
-		}
-		for _, v := range resp.Header[n] {
-			out = append(out, key.Render(label)+"  "+val.Render(format.Sanitize(v)))
+		label := Fit(ansi.Truncate(format.Sanitize(n), nameW, theme.IconEllipsis), nameW, true)
+		for _, v := range header[n] {
+			v = format.Sanitize(v)
+			if valW < minWrap || len(v) <= valW {
+				out = append(out, key.Render(label)+"  "+val.Render(v))
+				continue
+			}
+			for i, l := range Lines(ansi.Wrap(v, valW, " ;,")) {
+				if i == 0 {
+					out = append(out, key.Render(label)+"  "+val.Render(l))
+				} else {
+					out = append(out, indent+val.Render(l))
+				}
+			}
 		}
 	}
 	return out
 }
 
-var timingRows = []string{"dns", "connect", "tls", "wait", "transfer", "total"}
+// timingLines draws the phases that happened as a waterfall, then what
+// is known about the connection: server, protocol, certificate and
+// redirects.
+func timingLines(st theme.Styles, resp *request.Response, width int, now time.Time) []string {
+	out := waterfall(st, resp.Timing, width)
+	label := func(s string) string { return st.Muted.Render(Fit(s, labelW, true)) }
+	sep := st.Subtle.Render(" " + theme.IconSep + " ")
+	row := func(name string, parts ...string) {
+		out = append(out, Fit(label(name)+strings.Join(parts, sep), width, false))
+	}
+	out = append(out, "")
 
-// timingLines draws the phases as a waterfall: each bar starts where its
+	if resp.Remote != "" {
+		parts := []string{st.Text.Render(format.Sanitize(resp.Remote))}
+		if resp.Timing.Reused {
+			parts = append(parts, st.Muted.Render("reused connection"))
+		}
+		row("server", parts...)
+	}
+	proto := []string{st.Text.Render(format.Sanitize(resp.Proto))}
+	if t := resp.TLS; t != nil {
+		proto = append(proto, st.Text.Render(t.Version))
+	}
+	row("protocol", proto...)
+	if t := resp.TLS; t != nil {
+		if t.Subject != "" {
+			row("cert", st.Text.Render(format.Sanitize(t.Subject)))
+		}
+		if t.Issuer != "" {
+			row("issuer", st.Text.Render(format.Sanitize(t.Issuer)))
+		}
+		if !t.Expires.IsZero() {
+			row("expires", st.Text.Render(t.Expires.Format(time.DateOnly)), expiry(st, t.Expires, now))
+		}
+	}
+	if resp.Redirects > 0 {
+		n := strconv.Itoa(resp.Redirects)
+		row("redirects", st.Text.Render(n+" "+theme.IconArrow+" "+format.Sanitize(resp.URL)))
+	}
+	return out
+}
+
+// expiry says how long a certificate stays valid: a warning within two
+// weeks, an error once expired.
+func expiry(st theme.Styles, t, now time.Time) string {
+	days := int(t.Sub(now).Hours() / 24)
+	switch {
+	case !t.After(now):
+		return st.Error.Render("expired")
+	case days == 0:
+		return st.Warning.Render("today")
+	case days == 1:
+		return st.Warning.Render("in 1 day")
+	case days <= 14:
+		return st.Warning.Render("in " + strconv.Itoa(days) + " days")
+	}
+	return st.Muted.Render("in " + strconv.Itoa(days) + " days")
+}
+
+// waterfall draws each phase that happened as a bar starting where the
 // phase started, scaled so the whole request spans the bar column. Wait
 // and transfer are anchored at the end, which keeps them right when the
 // request was sent some time after the connection was ready.
-func timingLines(st theme.Styles, t request.Timing, width int) []string {
-	const labelW, valueW, gap = 9, 9, 2
+func waterfall(st theme.Styles, t request.Timing, width int) []string {
+	const valueW, gap = 9, 2
 	phases := []struct {
+		name     string
 		d, start int64
 	}{
-		{int64(t.DNS), 0},
-		{int64(t.Connect), int64(t.DNS)},
-		{int64(t.TLS), int64(t.DNS + t.Connect)},
-		{int64(t.TTFB), int64(t.Total - t.Transfer - t.TTFB)},
-		{int64(t.Transfer), int64(t.Total - t.Transfer)},
+		{"dns", int64(t.DNS), 0},
+		{"connect", int64(t.Connect), int64(t.DNS)},
+		{"tls", int64(t.TLS), int64(t.DNS + t.Connect)},
+		{"wait", int64(t.TTFB), int64(t.Total - t.Transfer - t.TTFB)},
+		{"transfer", int64(t.Transfer), int64(t.Total - t.Transfer)},
 	}
 	total := max(1, int64(t.Total))
 	barW := width - labelW - valueW - gap
 	bar := theme.PaintOf(st.TimingBar)
 
-	out := make([]string, 0, len(timingRows)+2)
-	for i, name := range timingRows {
-		label := st.Muted.Render(Fit(name, labelW, true))
-		if i == len(phases) {
-			out = append(out, Fit(label+st.Strong.Render(padLeft(FormatDuration(t.Total), valueW)), width, false))
-			break
-		}
-		p := phases[i]
+	out := make([]string, 0, len(phases)+1)
+	for _, p := range phases {
 		if p.d == 0 {
-			out = append(out, Fit(label+st.Subtle.Render(padLeft("–", valueW)), width, false))
 			continue
 		}
-		line := label + st.Text.Render(padLeft(FormatDuration(time.Duration(p.d)), valueW))
+		line := st.Muted.Render(Fit(p.name, labelW, true)) +
+			st.Text.Render(padLeft(FormatDuration(time.Duration(p.d)), valueW))
 		if barW >= 10 {
 			from := int(max(0, p.start) * int64(barW) / total)
 			n := max(1, int(p.d*int64(barW)/total))
@@ -313,10 +397,8 @@ func timingLines(st theme.Styles, t request.Timing, width int) []string {
 		}
 		out = append(out, Fit(line, width, false))
 	}
-	if t.Reused {
-		out = append(out, "", st.Subtle.Render("connection reused"))
-	}
-	return out
+	sum := st.Muted.Render(Fit("total", labelW, true)) + st.Strong.Render(padLeft(FormatDuration(t.Total), valueW))
+	return append(out, Fit(sum, width, false))
 }
 
 func padLeft(s string, width int) string {

@@ -17,7 +17,11 @@ type KeyMap struct {
 	Submit   key.Binding
 	Cancel   key.Binding
 	Method   key.Binding
-	Sidebar  key.Binding
+
+	// On the method row.
+	PrevMethod key.Binding
+	NextMethod key.Binding
+	EditURL    key.Binding
 
 	Up       key.Binding
 	Down     key.Binding
@@ -60,11 +64,19 @@ func Default() KeyMap {
 		),
 		Method: key.NewBinding(
 			key.WithKeys("ctrl+t"),
-			key.WithHelp("ctrl+t", "next method"),
+			key.WithHelp("ctrl+t", "cycle method"),
 		),
-		Sidebar: key.NewBinding(
-			key.WithKeys("ctrl+b"),
-			key.WithHelp("ctrl+b", "sidebar"),
+		PrevMethod: key.NewBinding(
+			key.WithKeys("h", "left"),
+			key.WithHelp("←/h", "previous method"),
+		),
+		NextMethod: key.NewBinding(
+			key.WithKeys("l", "right"),
+			key.WithHelp("→/l", "next method"),
+		),
+		EditURL: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "edit url"),
 		),
 		Up: key.NewBinding(
 			key.WithKeys("k", "up"),
@@ -122,21 +134,23 @@ func Default() KeyMap {
 }
 
 // The hints below are ordered by importance: when the terminal is too
-// narrow, hints are dropped from the right, except the last two.
+// narrow, hints are dropped from the right, except the last two. Keys
+// whose action is plain from their name (arrows, page up and down) are
+// left to the help overlay.
 
 // URLHelp is the hint while the URL input has focus.
 func (k KeyMap) URLHelp() []key.Binding {
-	return []key.Binding{k.Submit, k.Method, k.NextPane, k.Sidebar, k.InputHelp, k.InputQuit}
+	return []key.Binding{k.Submit, k.Method, k.NextPane, k.InputHelp, k.InputQuit}
+}
+
+// MethodHelp is the hint while the method row has focus.
+func (k KeyMap) MethodHelp() []key.Binding {
+	return []key.Binding{k.NextMethod, k.EditURL, k.Send, k.Help, k.Quit}
 }
 
 // ResponseHelp is the hint while the response pane has focus.
 func (k KeyMap) ResponseHelp() []key.Binding {
-	return []key.Binding{k.Send, k.NextTab, k.Down, k.Up, k.PageDown, k.PageUp, k.NextPane, k.Help, k.Quit}
-}
-
-// SidebarHelp is the hint while the sidebar has focus.
-func (k KeyMap) SidebarHelp() []key.Binding {
-	return []key.Binding{k.Send, k.NextPane, k.Sidebar, k.Help, k.Quit}
+	return []key.Binding{k.Send, k.NextTab, k.NextPane, k.Help, k.Quit}
 }
 
 // SendingHelp is the hint while a request is in flight.
@@ -147,7 +161,8 @@ func (k KeyMap) SendingHelp() []key.Binding {
 // FullHelp is the grouped list shown in the help overlay.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Send, k.Submit, k.Cancel, k.Method, k.NextPane, k.PrevPane, k.Sidebar},
+		{k.Send, k.Submit, k.Cancel, k.NextPane, k.PrevPane},
+		{k.Method, k.PrevMethod, k.NextMethod, k.EditURL},
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom, k.PrevTab, k.NextTab},
 		{k.Help, k.InputHelp, k.Quit, k.InputQuit},
 	}

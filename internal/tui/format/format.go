@@ -43,9 +43,10 @@ type paints struct {
 	key, str, num, lit, punct theme.Paint
 }
 
-// New formats body. JSON (by content type, including +json types) is
-// indented; JSON that doesn't parse is shown as plain text. Binary bodies
-// become a one-line note instead of noise.
+// New formats body. JSON (by content type, including +json types, or an
+// object or array sent as text/plain or without a type) is indented; JSON
+// that doesn't parse is shown as plain text. Binary bodies become a
+// one-line note instead of noise.
 func New(body []byte, contentType string, st theme.Styles) *Doc {
 	d := &Doc{paints: paints{
 		key:   theme.PaintOf(st.JSONKey),
@@ -60,7 +61,7 @@ func New(body []byte, contentType string, st theme.Styles) *Doc {
 	case isBinary(body):
 		d.plain = []string{"binary body, not shown"}
 		return d
-	case isJSON(contentType):
+	case isJSON(contentType, body):
 		var buf bytes.Buffer
 		buf.Grow(len(body) + len(body)/2)
 		if json.Indent(&buf, bytes.TrimSpace(body), "", "  ") == nil {
@@ -180,12 +181,26 @@ func wordEnd(s string, i int) int {
 	return i
 }
 
-func isJSON(contentType string) bool {
+// isJSON reports whether body should be parsed as JSON: by its content
+// type, or, for text/plain and untyped bodies, which many APIs send JSON
+// as, by looking like an object or array.
+func isJSON(contentType string, body []byte) bool {
+	if contentType == "" {
+		return looksLikeJSON(body)
+	}
 	mt, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		return false
 	}
+	if mt == "text/plain" {
+		return looksLikeJSON(body)
+	}
 	return mt == "application/json" || strings.HasSuffix(mt, "+json")
+}
+
+func looksLikeJSON(body []byte) bool {
+	body = bytes.TrimLeft(body, " \t\r\n")
+	return len(body) > 0 && (body[0] == '{' || body[0] == '[')
 }
 
 func isBinary(body []byte) bool {

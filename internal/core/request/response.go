@@ -17,7 +17,19 @@ type Response struct {
 	Size        int64 // bytes of body received, after decompression
 	ContentType string
 	URL         string // the final URL, after redirects
+	Redirects   int    // redirects followed
+	Remote      string // address of the server that answered, "host:port"
+	TLS         *TLS   // nil over plain http
 	Timing      Timing
+}
+
+// TLS describes the connection's TLS version and the server's
+// certificate.
+type TLS struct {
+	Version string // e.g. "TLS 1.3"
+	Subject string // the certificate's common name, or its first DNS name
+	Issuer  string // the issuer's organization, or its common name
+	Expires time.Time
 }
 
 // Timing breaks a request down into its phases. With redirects, the phases

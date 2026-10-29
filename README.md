@@ -9,19 +9,23 @@ the response, all without leaving the keyboard.
 <!-- screenshot / GIF goes here -->
 
 > **Status: early development (v0.x).** The core loop works: edit a
-> request, send it, inspect the response. Collections, environments and
-> history are next. Expect changes between versions.
+> request, send it, inspect the response. Environments and history are
+> next. Expect changes between versions.
 
 ## Features
 
 Working now:
 
-- GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS, with timeouts and
-  redirects
-- Response status, size and timing (DNS, connect, TLS, wait, transfer) as a
-  small waterfall
-- Pretty-printed, highlighted JSON. Other content types are shown as plain
-  text, and binary bodies are recognized
+- GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS, always in view and
+  picked with the arrow keys, with timeouts and redirects
+- Response status, time, size and content type
+- Timing (DNS, connect, TLS, wait, transfer) as a small waterfall, with the
+  server address, protocol, TLS version, certificate and its expiry, and
+  redirects followed
+- Response headers, with long values (cookies, policies) wrapped in full
+- Pretty-printed, highlighted JSON, also when it is sent as `text/plain`
+  or without a content type. Other content types are shown as plain text,
+  and binary bodies are recognized
 - Smooth with multi-MB responses: only visible lines are rendered and
   highlighted
 - Cancel a request in flight with `esc`
@@ -32,8 +36,6 @@ Working now:
 Planned:
 
 - Query params, headers and request body in the editor
-- Collections stored as human-readable, git-friendly YAML in
-  `~/.config/quest/`
 - Environments with `{{variable}}` interpolation
 - Request history
 
@@ -59,9 +61,10 @@ make build    # writes bin/quest
 |---|---|
 | `enter` (in the URL) / `ctrl+s` | send |
 | `esc` / `ctrl+c` while sending | cancel the request |
-| `ctrl+t` | next method |
-| `tab` / `shift+tab` | next / previous pane |
-| `ctrl+b` | show or hide the sidebar |
+| `ctrl+t` | cycle the method, from anywhere |
+| `←` `→` / `h` `l` (on the method row) | pick the method |
+| `enter` (on the method row) | edit the url |
+| `tab` / `shift+tab` | next / previous pane: method row, url, response |
 | `j` `k` / `↓` `↑` | scroll |
 | `ctrl+d` `ctrl+u` / `pgdn` `pgup` | page down / up |
 | `g` `G` | top / bottom |
@@ -69,7 +72,7 @@ make build    # writes bin/quest
 | `?` (`f1` while typing) | help |
 | `q` (`ctrl+c` while typing) | quit |
 
-Planned: `ctrl+n` new request, `e` environments, `/` filter collections.
+Planned: `e` environments.
 
 ## Logs
 

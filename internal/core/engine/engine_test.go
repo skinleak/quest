@@ -89,16 +89,16 @@ func TestRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(resp.Body) != "end" || resp.URL != srv.URL+"/end" {
-		t.Errorf("followed: body %q, url %q", resp.Body, resp.URL)
+	if string(resp.Body) != "end" || resp.URL != srv.URL+"/end" || resp.Redirects != 1 {
+		t.Errorf("followed: body %q, url %q, %d redirects", resp.Body, resp.URL, resp.Redirects)
 	}
 
 	resp, err = e.Do(context.Background(), request.Request{Method: "GET", URL: srv.URL + "/start", NoRedirects: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.StatusCode != http.StatusFound {
-		t.Errorf("not followed: status %d, want 302", resp.StatusCode)
+	if resp.StatusCode != http.StatusFound || resp.Redirects != 0 {
+		t.Errorf("not followed: status %d, %d redirects; want 302, 0", resp.StatusCode, resp.Redirects)
 	}
 
 	_, err = e.Do(context.Background(), request.Request{Method: "GET", URL: srv.URL + "/loop"})
@@ -181,6 +181,12 @@ func TestTiming(t *testing.T) {
 	resp, err := e.Do(context.Background(), request.Request{Method: "GET", URL: srv.URL})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resp.Remote != srv.Listener.Addr().String() {
+		t.Errorf("remote = %q, want %q", resp.Remote, srv.Listener.Addr())
+	}
+	if resp.TLS == nil || resp.TLS.Version == "" || resp.TLS.Issuer == "" || resp.TLS.Expires.IsZero() {
+		t.Errorf("tls = %+v", resp.TLS)
 	}
 	tm := resp.Timing
 	if tm.Connect <= 0 || tm.TLS <= 0 || tm.TTFB < 20*time.Millisecond || tm.Reused {

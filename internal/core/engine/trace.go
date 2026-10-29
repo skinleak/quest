@@ -19,6 +19,7 @@ type tracer struct {
 	tlsStart, tlsDone        time.Time
 	wrote, firstByte         time.Time
 	reused                   bool
+	remote                   string
 }
 
 func (t *tracer) trace() *httptrace.ClientTrace {
@@ -36,6 +37,9 @@ func (t *tracer) trace() *httptrace.ClientTrace {
 		GotConn: func(info httptrace.GotConnInfo) {
 			t.mu.Lock()
 			t.reused = info.Reused
+			if info.Conn != nil {
+				t.remote = info.Conn.RemoteAddr().String()
+			}
 			t.mu.Unlock()
 		},
 		DNSStart: func(httptrace.DNSStartInfo) { t.mark(&t.dnsStart, false) },
@@ -63,6 +67,13 @@ func (t *tracer) mark(at *time.Time, once bool) {
 		*at = now
 	}
 	t.mu.Unlock()
+}
+
+// remoteAddr is the address of the last hop's server.
+func (t *tracer) remoteAddr() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.remote
 }
 
 // timing turns the marks into durations, with end as the end of the body.

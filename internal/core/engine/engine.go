@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,7 +93,8 @@ func (e *Engine) Do(ctx context.Context, r request.Request) (*request.Response, 
 	}
 	setHeaders(req, r)
 
-	client := &http.Client{Transport: e.transport, CheckRedirect: e.redirectPolicy(r.NoRedirects)}
+	var redirects int
+	client := &http.Client{Transport: e.transport, CheckRedirect: e.redirectPolicy(r.NoRedirects, &redirects)}
 	tr.start = time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
@@ -114,8 +116,33 @@ func (e *Engine) Do(ctx context.Context, r request.Request) (*request.Response, 
 		Size:        int64(len(data)),
 		ContentType: resp.Header.Get("Content-Type"),
 		URL:         resp.Request.URL.String(),
+		Redirects:   redirects,
+		Remote:      tr.remoteAddr(),
+		TLS:         tlsInfo(resp.TLS),
 		Timing:      tr.timing(time.Now()),
 	}, nil
+}
+
+// tlsInfo summarizes a connection's TLS state; nil for plain http.
+func tlsInfo(cs *tls.ConnectionState) *request.TLS {
+	if cs == nil {
+		return nil
+	}
+	info := &request.TLS{Version: tls.VersionName(cs.Version)}
+	if len(cs.PeerCertificates) == 0 {
+		return info
+	}
+	c := cs.PeerCertificates[0]
+	info.Subject = c.Subject.CommonName
+	if info.Subject == "" && len(c.DNSNames) > 0 {
+		info.Subject = c.DNSNames[0]
+	}
+	info.Issuer = c.Issuer.CommonName
+	if len(c.Issuer.Organization) > 0 {
+		info.Issuer = c.Issuer.Organization[0]
+	}
+	info.Expires = c.NotAfter
+	return info
 }
 
 // setHeaders copies the enabled headers and fills in a User-Agent and,
@@ -138,7 +165,9 @@ func setHeaders(req *http.Request, r request.Request) {
 	}
 }
 
-func (e *Engine) redirectPolicy(off bool) func(*http.Request, []*http.Request) error {
+// redirectPolicy follows up to MaxRedirects redirects, or none when off,
+// and counts the ones followed in *n.
+func (e *Engine) redirectPolicy(off bool, n *int) func(*http.Request, []*http.Request) error {
 	return func(_ *http.Request, via []*http.Request) error {
 		if off {
 			return http.ErrUseLastResponse
@@ -146,6 +175,7 @@ func (e *Engine) redirectPolicy(off bool) func(*http.Request, []*http.Request) e
 		if len(via) > e.opts.MaxRedirects {
 			return fmt.Errorf("%w (%d)", ErrTooManyRedirects, e.opts.MaxRedirects)
 		}
+		*n = len(via)
 		return nil
 	}
 }

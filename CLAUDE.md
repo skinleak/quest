@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 quest is a terminal HTTP client in Go: what Postman does for everyday work
-(build requests, send them, inspect responses, collections, environments),
+(build requests, send them, inspect responses, environments),
 with a calm, keyboard-first TUI. It belongs with the owner's other tools
 (`skinleak/qitlog`, `skinleak/gloq`) and should look and feel like qitlog.
 Priorities, in order: **a clean, consistent UI; performance; a small,
@@ -46,8 +46,7 @@ Logs go to `$XDG_CACHE_HOME/quest/quest.log` (`~/.cache/quest/quest.log`);
 
 Go 1.26+, Bubble Tea v1, Bubbles v1 (`key`, `help`, `textinput`), Lip Gloss
 v1, `charmbracelet/x/ansi`, `skinleak/gloq` for logging, `net/http` for the
-engine. YAML (`gopkg.in/yaml.v3`) arrives with the store. Every new
-dependency needs a reason written here.
+engine. Every new dependency needs a reason written here.
 
 ## Architecture
 
@@ -55,17 +54,17 @@ dependency needs a reason written here.
 cmd/quest/main.go           --version, open the log, query the terminal background, run tea.Program
 internal/core/              no imports from internal/tui, ever; it will also power a headless CLI
   request/                  Request (method, URL, params, headers, body, timeout, redirects),
-                            Validate, FullURL; Response and Timing
+                            Validate, FullURL; Response (with remote address, TLS, redirects)
+                            and Timing
   engine/                   Engine.Do: net/http with a shared pooled transport, per-request
                             client for the redirect policy, capped body read, cancellation
     trace.go                httptrace hooks → DNS/connect/TLS/TTFB/transfer/total
 internal/tui/
-  app/                      root Model: key routing, focus, layout, frame assembly
+  app/                      root Model: key routing, focus (method row, URL, response), frame assembly
     msgs.go                 tea.Msg types and the tea.Cmd that sends and formats a request
   components/               panes and widgets; each renders lines already cut to its width
-    editor.go               method + URL input
+    editor.go               method row (every method, active one colored) + URL input
     response.go             status line, body/headers/timing tabs, windowed scrolling
-    sidebar.go              collections and active env (empty states until the store lands)
     help.go                 status-bar hints and the ? overlay, generated from keys
     text.go, units.go       Fit/Lines/Spread; duration and size formatting
   format/                   body → display lines: JSON indent + per-line highlighting, sanitize
@@ -101,10 +100,11 @@ internal/tui/
   cyan, PATCH purple, DELETE red, others muted) and JSON tokens (keys
   blue, strings green, numbers cyan, literals purple, punctuation muted).
 - **Focus never relies on color alone.** The focused pane's title and the
-  active tab are bold, so focus stays visible with `NO_COLOR`.
+  active tab are bold, and the active method is underlined while the
+  method row has focus, so focus stays visible with `NO_COLOR`.
 - **Microcopy is short and lowercase**: "nothing sent yet", "request
   cancelled", "window too small".
-- **Plain Unicode icons only** (`▸ ▾ · ━ …`, in `theme`); no Nerd Font.
+- **Plain Unicode icons only** (`· ━ … →`, in `theme`); no Nerd Font.
 - **Untrusted text goes through `format.Sanitize`** before display: bodies,
   header names and values, status text, error messages. Responses can
   carry escape sequences, including C1 controls inside valid JSON strings.
@@ -129,9 +129,25 @@ internal/tui/
   JSON never splits a token across lines, so `format` colors each line on
   its own (a string followed by `:` is a key). Revisit only if HTML/XML
   highlighting is asked for, and then load a single lexer lazily.
-- **Method is cycled with `ctrl+t`**: the URL input takes printable keys,
-  so the method needs a modifier. `f1` is help and `ctrl+c` quits while
+- **Every method is always in view**, in a row above the URL with the
+  active one in its color (underlined while the row has focus). The row is
+  a focus stop before the URL (`shift+tab` from the URL): `←`/`→` pick,
+  `enter` goes to the URL. `ctrl+t` cycles it from anywhere, because the
+  URL input takes printable keys. `f1` is help and `ctrl+c` quits while
   typing, because `?` and `q` are URL characters.
+- **No collections and no sidebar**: dropped by the owner; the request
+  and response take the full width.
+- **Footer hints leave out self-explanatory keys** (arrows, page up and
+  down, top and bottom); the `?` overlay lists every binding.
+- **Timing tab** shows only the phases that happened (a reused connection
+  has no dns/connect/tls rows), then server address, protocol and TLS
+  version, certificate subject, issuer and expiry (yellow within 14 days,
+  red once expired), and redirects with the final URL.
+- **Header values wrap** under their column instead of being cut; names
+  longer than 28 cells are cut so the values stay aligned.
+- **JSON is sniffed** in `text/plain` and untyped bodies that start with
+  `{` or `[`, since many APIs send JSON that way; if it doesn't parse it
+  stays plain text.
 - **A URL without a scheme gets `http://`**, like curl.
 - **A body without a Content-Type** gets `application/json` when it parses
   as JSON, else `text/plain; charset=utf-8`. The User-Agent defaults to
@@ -141,10 +157,9 @@ internal/tui/
   4 KiB, bodies with a NUL in the first 512 bytes are shown as binary.
 - **Timing with redirects** shows the phases of the last hop; total covers
   all hops. The waterfall anchors wait and transfer at the end.
-- **Narrow windows** (inner width < 80) never put the sidebar beside the
-  panes: it is shown alone while it has focus. `ctrl+b` turns it off and on
-  (and focuses it when narrow). Below 40×10 a "window too small" note
-  replaces the frame.
+- **Narrow windows**: the method row closes up to single spaces, then shows
+  only the active method. Below 40×10 a "window too small" note replaces
+  the frame.
 
 ## Gotchas
 
@@ -211,8 +226,8 @@ nothing to bump in code.
 ## Out of scope (do not build unless the owner asks)
 
 Scripting and tests, auth helpers (OAuth etc.), WebSocket, gRPC, GraphQL,
-Postman import/export, cloud sync, plugins, mouse-heavy UX. Leave clean
-seams (core stays UI-free), but no speculative abstractions.
+Postman import/export, collections, cloud sync, plugins, mouse-heavy UX.
+Leave clean seams (core stays UI-free), but no speculative abstractions.
 
 ## Roadmap
 
@@ -225,6 +240,4 @@ Next, in order:
 1. Params, headers and body tabs in the request editor.
 2. Environments: `internal/core/env`, `{{var}}` interpolation in URL,
    params, headers and body; `e` to switch.
-3. Store: collections and requests as YAML in `~/.config/quest/`
-   (lazy-loaded), sidebar tree with `/` filter, `ctrl+n` new request.
-4. History: last N requests in a local file.
+3. History: last N requests in a local file.

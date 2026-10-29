@@ -2,11 +2,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,6 +23,18 @@ func main() {
 }
 
 func run() int {
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	flag.Parse()
+	if *showVersion {
+		fmt.Println("quest", version())
+		return 0
+	}
+	if flag.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "quest: unexpected argument:", flag.Arg(0))
+		flag.Usage()
+		return 2
+	}
+
 	logFile, log := openLog()
 	if logFile != nil {
 		defer logFile.Close()
@@ -38,6 +52,16 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+// version is the module version Go recorded at build time: the tag for
+// `go install …@v0.1.0`, a pseudo-version for untagged commits, and
+// "(devel)" for a local build.
+func version() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "(devel)"
 }
 
 // openLog logs to quest.log in the user's cache directory, never to the

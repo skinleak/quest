@@ -32,7 +32,12 @@ make race         # go test -race ./...
 make bench        # hot-path benchmarks
 make lint         # golangci-lint (v2 config in .golangci.yml)
 make check        # the definition of done
+go run ./cmd/quest --version
 ```
+
+CI (`.github/workflows/ci.yml`) runs the same checks on Linux and macOS
+(tests with `-race`), cross-compiles for Windows, and runs golangci-lint,
+on every push to main and every pull request.
 
 Logs go to `$XDG_CACHE_HOME/quest/quest.log` (`~/.cache/quest/quest.log`);
 `QUEST_LOG=debug` raises the level.
@@ -47,7 +52,7 @@ dependency needs a reason written here.
 ## Architecture
 
 ```
-cmd/quest/main.go           open the log, query the terminal background, run tea.Program
+cmd/quest/main.go           --version, open the log, query the terminal background, run tea.Program
 internal/core/              no imports from internal/tui, ever; it will also power a headless CLI
   request/                  Request (method, URL, params, headers, body, timeout, redirects),
                             Validate, FullURL; Response and Timing
@@ -181,6 +186,28 @@ Measured with `make bench` (Intel Core Ultra 7 268V). Keep within ~2×.
 Anything proportional to body size belongs in the `tea.Cmd`, not in
 `Update` or `View`.
 
+## Releasing
+
+The module lives at `github.com/skinleak/quest`. Users install with
+`go install github.com/skinleak/quest/cmd/quest@latest`, which resolves to
+the highest `vX.Y.Z` tag; untagged commits on main never reach them. A
+release is a tag on a merged, CI-green commit of `main`:
+
+```sh
+git pull
+git tag -a v0.2.0 -m "v0.2.0: <what changed>"
+git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` then asks proxy.golang.org for the tag,
+which makes it `@latest` at once. Check from outside the repo with
+`go list -m github.com/skinleak/quest@latest`. Bump the minor version for
+features and the patch version for fixes; `v0.x` means no compatibility
+promises. Tags are permanent in the Go proxy: never move or delete one,
+release a new patch instead. The README install command stays `@latest`.
+`--version` reads the version Go stamps into the binary, so there is
+nothing to bump in code.
+
 ## Out of scope (do not build unless the owner asks)
 
 Scripting and tests, auth helpers (OAuth etc.), WebSocket, gRPC, GraphQL,
@@ -189,7 +216,7 @@ seams (core stays UI-free), but no speculative abstractions.
 
 ## Roadmap
 
-Done (first milestone, vertical slice): theme, layout shell with panes,
+Released as `v0.1.0` (first milestone, vertical slice): theme, layout shell with panes,
 status bar, help overlay and minimum size; method + URL editor; engine with
 timing and cancellation; response viewer with highlighted JSON, headers
 and a timing waterfall.

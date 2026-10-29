@@ -1,12 +1,16 @@
 # quest
 
+[![ci](https://github.com/skinleak/quest/actions/workflows/ci.yml/badge.svg)](https://github.com/skinleak/quest/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/skinleak/quest.svg)](https://pkg.go.dev/github.com/skinleak/quest)
+
 A fast, calm HTTP client for the terminal. Build a request, send it, read
 the response, all without leaving the keyboard.
 
 <!-- screenshot / GIF goes here -->
 
-> **Status: early development.** The core loop works: edit a request, send
-> it, inspect the response. Collections, environments and history are next.
+> **Status: early development (v0.x).** The core loop works: edit a
+> request, send it, inspect the response. Collections, environments and
+> history are next. Expect changes between versions.
 
 ## Features
 
@@ -47,6 +51,8 @@ cd quest
 make build    # writes bin/quest
 ```
 
+`quest --version` prints the installed version.
+
 ## Keys
 
 | Key | Action |
@@ -70,3 +76,7 @@ Planned: `ctrl+n` new request, `e` environments, `/` filter collections.
 quest never writes to the terminal it draws on. Diagnostics go to
 `~/.cache/quest/quest.log`; set `QUEST_LOG=debug` for more detail. URLs,
 headers and bodies are never logged.
+
+## License
+
+[MIT](LICENSE)

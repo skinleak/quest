@@ -1,6 +1,6 @@
-// Package discover finds a project's API endpoints in OpenAPI specs and
-// .http files, so they can be picked instead of typed. It reads files
-// only; nothing is sent.
+// Package discover finds a project's API endpoints in OpenAPI specs, .http
+// files and Go source (gin, echo, chi, net/http), so they can be picked
+// instead of typed. It reads files only; nothing is sent or run.
 package discover
 
 import (
@@ -48,12 +48,13 @@ type Result struct {
 
 var errNotSpec = errors.New("not an openapi spec")
 
-// Find searches root for OpenAPI specs (JSON or YAML) and .http files and
-// returns their endpoints, file by file in path order. Unreadable files
-// are skipped; only a cancelled ctx is an error.
+// Find searches root for OpenAPI specs (JSON or YAML), .http files and Go
+// routes and returns their endpoints: specs, then .http files, then Go
+// routes, each in path order. Unreadable files are skipped; only a
+// cancelled ctx is an error.
 func Find(ctx context.Context, root string) (Result, error) {
 	var res Result
-	var specs, httpFiles []string
+	var specs, httpFiles, goFiles []string
 	entries := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -80,6 +81,10 @@ func Find(ctx context.Context, root string) (Result, error) {
 			if isSpec(path, name) {
 				specs = append(specs, path)
 			}
+		case ".go":
+			if !strings.HasSuffix(name, "_test.go") {
+				goFiles = append(goFiles, path)
+			}
 		}
 		return nil
 	})
@@ -92,11 +97,7 @@ func Find(ctx context.Context, root string) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			rel = path
-		}
-		rel = filepath.ToSlash(rel)
+		rel := relPath(root, path)
 		data, err := readFile(path)
 		var eps []Endpoint
 		if err == nil {
@@ -115,7 +116,23 @@ func Find(ctx context.Context, root string) (Result, error) {
 			res.Files++
 		}
 	}
+
+	eps, files, err := goRoutes(ctx, root, goFiles)
+	if err != nil {
+		return res, err
+	}
+	res.Endpoints = append(res.Endpoints, eps...)
+	res.Files += files
 	return res, nil
+}
+
+// relPath is path relative to root, with forward slashes.
+func relPath(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // isSpec tells an OpenAPI spec from other JSON or YAML: by its name, or

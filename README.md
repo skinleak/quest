@@ -18,8 +18,8 @@ the response, all without leaving the keyboard.
 Working now:
 
 - Run quest in a project and press `ctrl+p` to pick from its endpoints,
-  found in OpenAPI specs (2.0 and 3.x, JSON or YAML) and `.http`/`.rest`
-  files. Filter by typing; `enter` loads the method, URL, params, headers
+  found in OpenAPI specs (2.0 and 3.x, JSON or YAML), `.http`/`.rest`
+  files and Go code (gin, echo, chi, `net/http`). Filter by typing; `enter` loads the method, URL, params, headers
   and an example body into the editor. Typing any URL works as before
 - GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS, always in view and
   picked with the arrow keys, with timeouts and redirects
@@ -102,6 +102,13 @@ skipping dot-directories, `node_modules`, `vendor`, `dist`, `build` and
   the body comes from the spec's example or is built from its schema.
 - **`.http` and `.rest` files**, as used by the VS Code REST Client and
   JetBrains: requests separated by `###`, with `@name = value` variables.
+- **Go routes** registered with gin, echo, chi or `net/http`'s ServeMux:
+  `r.GET("/ping", ping)`, `mux.HandleFunc("GET /items/{id}", h)`, with
+  router groups (`r.Group("/api")`, chi's `r.Route`) followed, also when
+  a group is passed to another function. The base URL comes from a
+  literal listen address such as `r.Run(":8080")`. Only literal paths are
+  read: routes built at runtime are not found. The code is read, never
+  built or run.
 
 A spec without an absolute server URL gets `{{baseUrl}}`, and path
 parameters stay as `{id}`: quest asks you to fill them in before sending.

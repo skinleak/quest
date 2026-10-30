@@ -151,7 +151,7 @@ func (p *Picker) View(st *theme.Styles, width, height int) []string {
 	case len(p.all) == 0:
 		out = note("no endpoints found")
 		if rows > 1 {
-			out = append(out, Fit(st.P.Subtle.Render("quest reads openapi specs and .http files in "+p.root), width, false))
+			out = append(out, Fit(st.P.Subtle.Render("quest reads openapi specs, .http files and go routes in "+p.root), width, false))
 		}
 		return out
 	case len(p.shown) == 0:

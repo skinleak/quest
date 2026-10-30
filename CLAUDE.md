@@ -68,6 +68,7 @@ internal/core/              no imports from internal/tui, ever; it will also pow
   discover/                 Find: walks a project for OpenAPI specs and .http files → Endpoints
     openapi.go              OpenAPI 2/3 on yaml.Node: servers, params, $ref, example bodies
     httpfile.go             .http/.rest files: ### blocks, @variables, headers, body
+    goroutes.go             Go routes via go/parser: gin, echo, chi, ServeMux; groups, listen addr
 internal/tui/
   app/                      root Model: key routing, focus (method row, URL, request tabs,
                             response), frame assembly
@@ -161,8 +162,22 @@ internal/tui/
   list shows meanwhile), so edited specs show up. The walk skips
   dot-directories and dependency/build dirs and stops after 20,000
   entries or 10 s ("search stopped early"); files over 16 MiB are skipped.
-  Reading routes from source code was left out: it needs a parser per
-  framework and breaks easily.
+  Go source is read too (below); other languages were left out: each
+  needs its own regex-based reader and breaks easily.
+- **Go routes come from the AST, never from running code.** Only files
+  importing `net/http`, gin, echo or chi are parsed (a byte search skips
+  the rest, and `_test.go`). A route needs a literal path (`/…`, or `""`
+  under a group) and a handler argument, which keeps `http.Get(url)` and
+  `c.Get("key")` out. Group prefixes are tracked per variable or field
+  (`api`, `s.router`), through chained `Group` calls and chi's `Route`,
+  and across functions: a group passed as an argument prefixes the
+  callee's routes, matched by function name and resolved over up to four
+  passes (a parameter passed different prefixes gets none). Path params
+  become `{name}` so "fill in" applies. The base URL is the first literal
+  listen address (`Run`, `Start`, `ListenAndServe`, `http.Server{Addr}`;
+  a bare gin `Run()` is `:8080`), else `{{baseUrl}}`. Handlers are named
+  by identifier; an adapter (`gin.WrapF`, `http.HandlerFunc`) by what it
+  wraps.
 - **Picked endpoints are filled in, not sent**: required params and
   headers on, optional ones off; the body is the spec's example or one
   built from its schema (spec key order, zero values, `$ref` and `allOf`
@@ -260,6 +275,7 @@ Measured with `make bench` (Intel Core Ultra 7 268V). Keep within ~2×.
 | `Engine.Do`, 64 KiB body, pooled local connection | ~0.2 ms | background |
 | Parse an OpenAPI spec, 1,000 operations (~190 KiB YAML) | ~13 ms | background |
 | Search a home directory (stops at 20,000 entries) | ~80 ms | background |
+| Search Go's own source tree for routes (~10k .go files) | ~190 ms | background |
 
 Anything proportional to body size belongs in the `tea.Cmd`, not in
 `Update` or `View`.
@@ -302,8 +318,10 @@ and a timing waterfall.
 
 Released as `v0.2.0`: params, headers and body tabs in the request editor.
 
-Done since: endpoint discovery (OpenAPI and `.http` files) and the `ctrl+p`
-endpoint list.
+Released as `v0.3.0`: endpoint discovery (OpenAPI and `.http` files) and
+the `ctrl+p` endpoint list.
+
+Done since: Go routes (gin, echo, chi, ServeMux) in the endpoint list.
 
 Next, in order (agreed with the owner):
 1. History in `$XDG_CACHE_HOME/quest/`, per project directory (nothing is

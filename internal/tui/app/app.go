@@ -26,6 +26,9 @@ const (
 	chromeHeight = 5  // blank, header, blank above the body; blank, footer below
 	minWidth     = 40 // below this, only a "too small" note is shown
 	minHeight    = 10
+	// maxArea caps the lines of params, headers or body shown, so the
+	// response keeps most of a tall window.
+	maxArea = 12
 )
 
 // pane is a focus stop; tab moves through them in this order.
@@ -34,6 +37,7 @@ type pane int
 const (
 	paneMethod pane = iota
 	paneURL
+	paneRequest // the params, headers and body
 	paneResponse
 	paneCount
 )
@@ -42,8 +46,8 @@ const (
 type Model struct {
 	engine *engine.Engine
 	log    *slog.Logger
-	styles theme.Styles
-	keys   keys.KeyMap
+	styles *theme.Styles
+	keys   *keys.KeyMap
 
 	width, height int
 	focus         pane
@@ -92,12 +96,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyResponse(msg)
 		return m, nil
 	case tea.KeyMsg:
-		return m.handleKey(msg)
+		m, cmd := m.handleKey(msg)
+		// Keys can add or remove rows, which moves the response.
+		m.resize()
+		return m, cmd
 	}
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	m.message, m.isErr = "", false
 	k := m.keys
 
@@ -144,6 +151,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.editor.Update(msg)
 	}
+	if m.editor.Editing() {
+		if key.Matches(msg, k.Done) || (!m.editor.EditingBody() && key.Matches(msg, k.Submit)) {
+			m.editor.StopEdit()
+			return m, nil
+		}
+		return m, m.editor.UpdateEditing(msg)
+	}
 
 	switch {
 	case key.Matches(msg, k.Quit):
@@ -152,6 +166,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openHelp()
 	case m.focus == paneMethod:
 		return m, m.handleMethodKey(msg)
+	case m.focus == paneRequest:
+		return m, m.handleRequestKey(msg)
 	case m.focus == paneResponse:
 		m.handleResponseKey(msg)
 	}
@@ -167,6 +183,30 @@ func (m *Model) handleMethodKey(msg tea.KeyMsg) tea.Cmd {
 		m.editor.MoveMethod(1)
 	case key.Matches(msg, k.EditURL):
 		return m.setFocus(paneURL)
+	}
+	return nil
+}
+
+// handleRequestKey works the params, headers and body tabs.
+func (m *Model) handleRequestKey(msg tea.KeyMsg) tea.Cmd {
+	k, e := m.keys, &m.editor
+	switch {
+	case key.Matches(msg, k.NextTab):
+		e.MoveTab(1)
+	case key.Matches(msg, k.PrevTab):
+		e.MoveTab(-1)
+	case key.Matches(msg, k.Down):
+		e.MoveRow(1)
+	case key.Matches(msg, k.Up):
+		e.MoveRow(-1)
+	case key.Matches(msg, k.Edit):
+		return e.Edit()
+	case key.Matches(msg, k.Add):
+		return e.Add()
+	case key.Matches(msg, k.Delete):
+		e.Delete()
+	case key.Matches(msg, k.Toggle):
+		e.Toggle()
 	}
 	return nil
 }
@@ -240,6 +280,7 @@ func (m *Model) openHelp() {
 }
 
 func (m *Model) setFocus(p pane) tea.Cmd {
+	m.editor.StopEdit()
 	m.focus = p
 	if p == paneURL {
 		return m.editor.Focus()
@@ -260,12 +301,17 @@ func (m Model) innerWidth() int { return max(1, m.width-2*padX) }
 func (m Model) bodyHeight() int { return max(1, m.height-chromeHeight) }
 func (m Model) tooSmall() bool  { return m.width < minWidth || m.height < minHeight }
 
-// resize sizes the panes for the current window.
+// resize sizes the panes for the current window. The request's tab
+// content gets the lines it needs, up to two fifths of the room left
+// after the fixed lines, and the response gets the rest.
 func (m *Model) resize() {
 	w := m.innerWidth()
 	m.editor.SetWidth(w)
-	// The editor, a blank line, then the response.
-	m.response.SetSize(w, max(0, m.bodyHeight()-components.EditorHeight-1))
+	// The editor, a blank line, its tab content, a blank line, then at
+	// least the response's title.
+	room := m.bodyHeight() - components.EditorHeight - 2
+	m.editor.SetArea(max(0, min(m.editor.ContentHeight(), maxArea, room*2/5)))
+	m.response.SetSize(w, max(0, m.bodyHeight()-m.editor.Height()-1))
 }
 
 // View implements tea.Model. The frame is assembled line by line from
@@ -322,6 +368,8 @@ func (m Model) bodyLines() []string {
 		focus = components.EditorMethod
 	case paneURL:
 		focus = components.EditorURL
+	case paneRequest:
+		focus = components.EditorTabs
 	}
 	out := m.editor.View(m.styles, w, focus)
 	out = append(out, "")
@@ -347,6 +395,14 @@ func (m Model) footerView() string {
 		return m.help.Hints(m.keys.MethodHelp(), w)
 	case paneURL:
 		return m.help.Hints(m.keys.URLHelp(), w)
+	case paneRequest:
+		switch {
+		case m.editor.Editing():
+			return m.help.Hints(m.keys.EditingHelp(), w)
+		case m.editor.Tab() == components.ReqBody:
+			return m.help.Hints(m.keys.BodyHelp(), w)
+		}
+		return m.help.Hints(m.keys.ListHelp(), w)
 	}
 	return m.help.Hints(m.keys.ResponseHelp(), w)
 }

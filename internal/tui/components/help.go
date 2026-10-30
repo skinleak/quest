@@ -18,7 +18,7 @@ type Help struct {
 }
 
 // NewHelp returns a Help styled from st.
-func NewHelp(st theme.Styles) Help {
+func NewHelp(st *theme.Styles) Help {
 	h := help.New()
 	h.ShortSeparator = " " + theme.IconSep + " "
 	h.FullSeparator = "      "
@@ -54,7 +54,7 @@ func (h Help) Hints(bs []key.Binding, width int) string {
 func (h *Help) Reset() { h.offset = 0 }
 
 // Scroll scrolls the overlay when it doesn't fit the window.
-func (h *Help) Scroll(st theme.Styles, groups [][]key.Binding, delta, width, height int) {
+func (h *Help) Scroll(st *theme.Styles, groups [][]key.Binding, delta, width, height int) {
 	_, scroll := h.lines(st, groups, width, height)
 	h.offset = min(max(0, h.offset+delta), scroll)
 }
@@ -62,7 +62,7 @@ func (h *Help) Scroll(st theme.Styles, groups [][]key.Binding, delta, width, hei
 // Overlay renders every binding in a width × height body, centered when
 // it fits. Nothing is ever cut off: groups that don't fit side by side go
 // below each other, and a list taller than the window scrolls with j/k.
-func (h Help) Overlay(st theme.Styles, groups [][]key.Binding, width, height int) []string {
+func (h Help) Overlay(st *theme.Styles, groups [][]key.Binding, width, height int) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -96,7 +96,7 @@ func (h Help) Overlay(st theme.Styles, groups [][]key.Binding, width, height int
 // lines lays out the title and the groups: as many side by side as fit,
 // the rest below. It also returns how far the lines scroll, which is 0
 // when they fit along with the closing hint.
-func (h Help) lines(st theme.Styles, groups [][]key.Binding, width, height int) ([]string, int) {
+func (h Help) lines(st *theme.Styles, groups [][]key.Binding, width, height int) ([]string, int) {
 	m := h.model
 	m.Width = 0 // never cut a group; the layout makes room
 	blocks := make([][]string, 0, len(groups))

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/skinleak/quest/internal/core/engine"
+	"github.com/skinleak/quest/internal/core/request"
 )
 
 func newTestModel(t testing.TB) Model {
@@ -66,8 +67,27 @@ func keyPress(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlT}
 	case "f1":
 		return tea.KeyMsg{Type: tea.KeyF1}
+	case " ":
+		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+// focusPane presses tab until p has focus.
+func focusPane(t testing.TB, m Model, p pane) Model {
+	t.Helper()
+	for range paneCount {
+		if m.focus == p {
+			return m
+		}
+		m = pump(t, m, keyPress("tab"))
+	}
+	t.Fatalf("tab never reached pane %d", p)
+	return m
 }
 
 func typeText(t testing.TB, m Model, s string) Model {
@@ -103,7 +123,7 @@ func TestSendShowsResponse(t *testing.T) {
 		}
 	}
 
-	m = pump(t, m, keyPress("tab")) // response pane
+	m = focusPane(t, m, paneResponse)
 	m = pump(t, m, keyPress("l"))
 	if v := plainView(m); !strings.Contains(v, "X-Request-Id") || !strings.Contains(v, "abc123") {
 		t.Errorf("headers tab:\n%s", v)
@@ -174,7 +194,7 @@ func TestMethodRowNarrow(t *testing.T) {
 
 func TestFooterHints(t *testing.T) {
 	m := newTestModel(t)
-	m = pump(t, m, keyPress("tab")) // response pane
+	m = focusPane(t, m, paneResponse)
 	footer := plainView(m)[strings.LastIndex(plainView(m), "\n")+1:]
 	for _, want := range []string{"send", "next tab", "help", "quit"} {
 		if !strings.Contains(footer, want) {
@@ -274,12 +294,23 @@ func TestViewFitsWindow(t *testing.T) {
 
 	modes := map[string]func() Model{
 		"empty":    func() Model { return base },
-		"help":     func() Model { return pump(t, pump(t, base, keyPress("tab")), keyPress("?")) },
-		"body":     func() Model { return pump(t, loaded, keyPress("tab")) },
-		"scrolled": func() Model { return pump(t, pump(t, loaded, keyPress("tab")), keyPress("G")) },
-		"headers":  func() Model { return pump(t, pump(t, loaded, keyPress("tab")), keyPress("l")) },
-		"timing":   func() Model { return pump(t, pump(t, loaded, keyPress("tab")), keyPress("h")) },
+		"help":     func() Model { return pump(t, focusPane(t, base, paneResponse), keyPress("?")) },
+		"body":     func() Model { return focusPane(t, loaded, paneResponse) },
+		"scrolled": func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("G")) },
+		"headers":  func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("l")) },
+		"timing":   func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("h")) },
 		"method":   func() Model { return pump(t, base, keyPress("shift+tab")) },
+		"params":   func() Model { return focusPane(t, base, paneRequest) },
+		"editing": func() Model {
+			m := pump(t, focusPane(t, loaded, paneRequest), keyPress("a"))
+			return typeText(t, m, "Authorization: Bearer "+strings.Repeat("x", 300))
+		},
+		"body editing": func() Model {
+			m := focusPane(t, loaded, paneRequest)
+			m.editor.SetRequest(request.Request{Method: "POST", URL: "x.io", Body: strings.Repeat("{\"a\": 1}\n", 40)})
+			m = pump(t, pump(t, m, keyPress("h")), keyPress("enter"))
+			return typeText(t, m, strings.Repeat("y", 300))
+		},
 		"error": func() Model {
 			m := typeText(t, newTestModel(t), "http://127.0.0.1:1/")
 			return pump(t, m, keyPress("enter"))
@@ -298,6 +329,98 @@ func TestViewFitsWindow(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// echoServer answers with the query, the X-Test header and the body it
+// got, so tests can see what was sent.
+func echoServer(t testing.TB) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		io.WriteString(w, "query "+r.URL.RawQuery+"\nx-test "+r.Header.Get("X-Test")+"\n"+string(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRequestTabsAreSent(t *testing.T) {
+	srv := echoServer(t)
+	m := newTestModel(t)
+	m = typeText(t, m, srv.URL+"?a=1")
+	m = focusPane(t, m, paneRequest)
+
+	m = pump(t, m, keyPress("a")) // params
+	m = typeText(t, m, "b=2 3")
+	m = pump(t, m, keyPress("enter"))
+	m = pump(t, m, keyPress("l")) // headers
+	m = pump(t, m, keyPress("a"))
+	m = typeText(t, m, "X-Test: yes")
+	m = pump(t, m, keyPress("esc"))
+	m = pump(t, m, keyPress("l")) // body
+	m = pump(t, m, keyPress("enter"))
+	m = typeText(t, m, "{")
+	m = pump(t, m, keyPress("enter"))
+	m = typeText(t, m, `"k": 1`)
+	m = pump(t, m, keyPress("ctrl+s")) // sent while still editing
+
+	v := plainView(m)
+	for _, want := range []string{"query a=1&b=2%203", "x-test yes", `  "k": 1`, "params 2", "headers 1"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("missing %q:\n%s", want, v)
+		}
+	}
+	if got := m.editor.Request().Body; got != "{\n  \"k\": 1" {
+		t.Errorf("body = %q", got)
+	}
+}
+
+func TestParamsFollowURL(t *testing.T) {
+	m := newTestModel(t)
+	m = typeText(t, m, "x.io/s?a=1&b=2#top")
+	m = focusPane(t, m, paneRequest)
+	m = pump(t, m, keyPress(" ")) // a off
+	if got := m.editor.Request().URL; got != "x.io/s?b=2#top" {
+		t.Errorf("after toggle: url %q", got)
+	}
+	m = pump(t, m, keyPress("shift+tab")) // back to the url
+	m = pump(t, m, tea.KeyMsg{Type: tea.KeyHome})
+	m = typeText(t, m, "a")
+	m = focusPane(t, m, paneRequest)
+	v := plainView(m)
+	for _, want := range []string{"a  1", "b  2", "params 1"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("missing %q:\n%s", want, v)
+		}
+	}
+	m = pump(t, m, keyPress(" ")) // a back on, in its old place
+	if got := m.editor.Request().URL; got != "ax.io/s?a=1&b=2#top" {
+		t.Errorf("after toggle back: url %q", got)
+	}
+}
+
+func TestEmptyRowIsRemoved(t *testing.T) {
+	m := newTestModel(t)
+	m = focusPane(t, m, paneRequest)
+	m = pump(t, m, keyPress("l"))
+	m = pump(t, m, keyPress("a"))
+	m = pump(t, m, keyPress("esc"))
+	if v := plainView(m); !strings.Contains(v, "no headers") {
+		t.Errorf("empty row kept:\n%s", v)
+	}
+}
+
+func TestRequestAreaGrows(t *testing.T) {
+	m := newTestModel(t)
+	before := m.editor.Height()
+	m = focusPane(t, m, paneRequest)
+	m = pump(t, m, keyPress("l"))
+	for _, h := range []string{"A: 1", "B: 2", "C: 3"} {
+		m = pump(t, m, keyPress("a"))
+		m = typeText(t, m, h)
+		m = pump(t, m, keyPress("enter"))
+	}
+	if got := m.editor.Height(); got != before+2 {
+		t.Errorf("editor height %d after 3 headers, want %d", got, before+2)
 	}
 }
 

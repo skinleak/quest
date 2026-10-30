@@ -93,6 +93,9 @@ func (r Request) FullURL() (*url.URL, error) {
 	if u.Host == "" {
 		return nil, ErrNoHost
 	}
+	// net/http sends the query as typed, and a space in it breaks the
+	// request line (servers answer 400). The path is escaped already.
+	u.RawQuery = strings.ReplaceAll(u.RawQuery, " ", "%20")
 	if len(r.Params) == 0 {
 		return u, nil
 	}

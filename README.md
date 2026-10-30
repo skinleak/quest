@@ -9,7 +9,8 @@ the response, all without leaving the keyboard.
 <!-- screenshot / GIF goes here -->
 
 > **Status: early development (v0.x).** The core loop works: edit a
-> request, send it, inspect the response. Environments and history are
+> request with its params, headers and body, send it, inspect the
+> response. Finding a project's endpoints, history and environments are
 > next. Expect changes between versions.
 
 ## Features
@@ -18,6 +19,9 @@ Working now:
 
 - GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS, always in view and
   picked with the arrow keys, with timeouts and redirects
+- Query params, headers and a request body, each in its own tab. Params
+  stay in sync with the URL, any row can be switched off without deleting
+  it, and a JSON body is highlighted as you type
 - Response status, time, size and content type
 - Timing (DNS, connect, TLS, wait, transfer) as a small waterfall, with the
   server address, protocol, TLS version, certificate and its expiry, and
@@ -35,9 +39,10 @@ Working now:
 
 Planned:
 
-- Query params, headers and request body in the editor
-- Environments with `{{variable}}` interpolation
+- Run quest in a project and pick from its endpoints, found in OpenAPI
+  specs and `.http` files, each with its last response time
 - Request history
+- Environments with `{{variable}}` interpolation
 
 ## Install
 
@@ -64,7 +69,14 @@ make build    # writes bin/quest
 | `ctrl+t` | cycle the method, from anywhere |
 | `←` `→` / `h` `l` (on the method row) | pick the method |
 | `enter` (on the method row) | edit the url |
-| `tab` / `shift+tab` | next / previous pane: method row, url, response |
+| `tab` / `shift+tab` | next / previous pane: method row, url, params/headers/body, response |
+| `l` `h` / `→` `←` (on params/headers/body) | next / previous request tab |
+| `j` `k` / `↓` `↑` (on params/headers) | select a row |
+| `enter` (on params/headers/body) | edit the row (`name: value` or `name=value`) or the body |
+| `a` | add a param or header |
+| `space` | switch a param or header on or off |
+| `d` | delete a param or header |
+| `esc` (while editing) | done editing |
 | `j` `k` / `↓` `↑` | scroll |
 | `ctrl+d` `ctrl+u` / `pgdn` `pgup` | page down / up |
 | `g` `G` | top / bottom |

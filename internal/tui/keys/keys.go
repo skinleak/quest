@@ -23,6 +23,13 @@ type KeyMap struct {
 	NextMethod key.Binding
 	EditURL    key.Binding
 
+	// On the request's params, headers and body.
+	Edit   key.Binding
+	Add    key.Binding
+	Delete key.Binding
+	Toggle key.Binding
+	Done   key.Binding
+
 	Up       key.Binding
 	Down     key.Binding
 	PageUp   key.Binding
@@ -40,8 +47,8 @@ type KeyMap struct {
 }
 
 // Default returns the default bindings.
-func Default() KeyMap {
-	return KeyMap{
+func Default() *KeyMap {
+	return &KeyMap{
 		NextPane: key.NewBinding(
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "next pane"),
@@ -77,6 +84,26 @@ func Default() KeyMap {
 		EditURL: key.NewBinding(
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "edit url"),
+		),
+		Edit: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "edit"),
+		),
+		Add: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "add"),
+		),
+		Delete: key.NewBinding(
+			key.WithKeys("d", "delete"),
+			key.WithHelp("d", "delete"),
+		),
+		Toggle: key.NewBinding(
+			key.WithKeys(" "),
+			key.WithHelp("space", "on/off"),
+		),
+		Done: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "done editing"),
 		),
 		Up: key.NewBinding(
 			key.WithKeys("k", "up"),
@@ -139,31 +166,83 @@ func Default() KeyMap {
 // left to the help overlay.
 
 // URLHelp is the hint while the URL input has focus.
-func (k KeyMap) URLHelp() []key.Binding {
+func (k *KeyMap) URLHelp() []key.Binding {
 	return []key.Binding{k.Submit, k.Method, k.NextPane, k.InputHelp, k.InputQuit}
 }
 
 // MethodHelp is the hint while the method row has focus.
-func (k KeyMap) MethodHelp() []key.Binding {
+func (k *KeyMap) MethodHelp() []key.Binding {
 	return []key.Binding{k.NextMethod, k.EditURL, k.Send, k.Help, k.Quit}
 }
 
+// ListHelp is the hint on the params and headers tabs.
+func (k *KeyMap) ListHelp() []key.Binding {
+	return []key.Binding{k.Edit, k.Add, k.Toggle, k.Delete, k.NextTab, k.Send, k.Help, k.Quit}
+}
+
+// BodyHelp is the hint on the body tab.
+func (k *KeyMap) BodyHelp() []key.Binding {
+	return []key.Binding{k.Edit, k.NextTab, k.Send, k.Help, k.Quit}
+}
+
+// EditingHelp is the hint while a row or the body is being edited.
+func (k *KeyMap) EditingHelp() []key.Binding {
+	return []key.Binding{k.Done, k.Send, k.NextPane, k.InputHelp, k.InputQuit}
+}
+
 // ResponseHelp is the hint while the response pane has focus.
-func (k KeyMap) ResponseHelp() []key.Binding {
+func (k *KeyMap) ResponseHelp() []key.Binding {
 	return []key.Binding{k.Send, k.NextTab, k.NextPane, k.Help, k.Quit}
 }
 
 // SendingHelp is the hint while a request is in flight.
-func (k KeyMap) SendingHelp() []key.Binding {
+func (k *KeyMap) SendingHelp() []key.Binding {
 	return []key.Binding{k.Cancel}
 }
 
 // FullHelp is the grouped list shown in the help overlay.
-func (k KeyMap) FullHelp() [][]key.Binding {
+func (k *KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Send, k.Submit, k.Cancel, k.NextPane, k.PrevPane},
 		{k.Method, k.PrevMethod, k.NextMethod, k.EditURL},
+		{k.Edit, k.Add, k.Delete, k.Toggle, k.Done},
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom, k.PrevTab, k.NextTab},
 		{k.Help, k.InputHelp, k.Quit, k.InputQuit},
+	}
+}
+
+// TextKeyMap holds the editing keys of the multi-line body editor. They are
+// the usual text-editing keys, like those of the URL input, so the help
+// overlay leaves them out.
+type TextKeyMap struct {
+	Left, Right, Up, Down      key.Binding
+	LineStart, LineEnd         key.Binding
+	PageUp, PageDown           key.Binding
+	Top, Bottom                key.Binding
+	Newline                    key.Binding
+	Backspace, DeleteChar      key.Binding
+	DeleteWord                 key.Binding
+	DeleteToStart, DeleteToEnd key.Binding
+}
+
+// DefaultText returns the default editing keys.
+func DefaultText() TextKeyMap {
+	return TextKeyMap{
+		Left:          key.NewBinding(key.WithKeys("left", "ctrl+b")),
+		Right:         key.NewBinding(key.WithKeys("right", "ctrl+f")),
+		Up:            key.NewBinding(key.WithKeys("up")),
+		Down:          key.NewBinding(key.WithKeys("down")),
+		LineStart:     key.NewBinding(key.WithKeys("home", "ctrl+a")),
+		LineEnd:       key.NewBinding(key.WithKeys("end", "ctrl+e")),
+		PageUp:        key.NewBinding(key.WithKeys("pgup")),
+		PageDown:      key.NewBinding(key.WithKeys("pgdown")),
+		Top:           key.NewBinding(key.WithKeys("ctrl+home")),
+		Bottom:        key.NewBinding(key.WithKeys("ctrl+end")),
+		Newline:       key.NewBinding(key.WithKeys("enter")),
+		Backspace:     key.NewBinding(key.WithKeys("backspace", "ctrl+h")),
+		DeleteChar:    key.NewBinding(key.WithKeys("delete", "ctrl+d")),
+		DeleteWord:    key.NewBinding(key.WithKeys("ctrl+w", "alt+backspace")),
+		DeleteToStart: key.NewBinding(key.WithKeys("ctrl+u")),
+		DeleteToEnd:   key.NewBinding(key.WithKeys("ctrl+k")),
 	}
 }

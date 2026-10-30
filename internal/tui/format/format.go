@@ -36,25 +36,40 @@ type Doc struct {
 	styled []string // highlighted lines, filled per chunk
 	done   []bool   // chunks already highlighted
 	json   bool
-	paints paints
+	hl     Highlighter
 }
 
-type paints struct {
+// Highlighter colors JSON one line at a time. JSON strings never span
+// lines, so any line of a JSON document, indented or not, can be colored
+// on its own: a string is a key when a colon follows it.
+type Highlighter struct {
 	key, str, num, lit, punct theme.Paint
+}
+
+// NewHighlighter takes the JSON token styles from st.
+func NewHighlighter(st *theme.Styles) Highlighter {
+	return Highlighter{
+		key:   theme.PaintOf(st.JSONKey),
+		str:   theme.PaintOf(st.JSONString),
+		num:   theme.PaintOf(st.JSONNumber),
+		lit:   theme.PaintOf(st.JSONLiteral),
+		punct: theme.PaintOf(st.JSONPunct),
+	}
+}
+
+// Line returns line, which must be sanitized, colored as JSON.
+func (h Highlighter) Line(line string) string {
+	var b strings.Builder
+	h.highlight(&b, line)
+	return b.String()
 }
 
 // New formats body. JSON (by content type, including +json types, or an
 // object or array sent as text/plain or without a type) is indented; JSON
 // that doesn't parse is shown as plain text. Binary bodies become a
 // one-line note instead of noise.
-func New(body []byte, contentType string, st theme.Styles) *Doc {
-	d := &Doc{paints: paints{
-		key:   theme.PaintOf(st.JSONKey),
-		str:   theme.PaintOf(st.JSONString),
-		num:   theme.PaintOf(st.JSONNumber),
-		lit:   theme.PaintOf(st.JSONLiteral),
-		punct: theme.PaintOf(st.JSONPunct),
-	}}
+func New(body []byte, contentType string, st *theme.Styles) *Doc {
+	d := &Doc{hl: NewHighlighter(st)}
 	switch {
 	case len(body) == 0:
 		return d
@@ -105,17 +120,15 @@ func (d *Doc) Highlight(from, to int) {
 		var b strings.Builder
 		for i := c * ChunkLines; i < end; i++ {
 			b.Reset()
-			d.paints.highlight(&b, d.plain[i])
+			d.hl.highlight(&b, d.plain[i])
 			d.styled[i] = b.String()
 		}
 		d.done[c] = true
 	}
 }
 
-// highlight colors one line of indented JSON. Indented JSON never splits
-// a token across lines, so each line can be colored on its own, in any
-// order: a string is a key when a colon follows it.
-func (p paints) highlight(b *strings.Builder, line string) {
+// highlight writes line to b, colored as JSON.
+func (h Highlighter) highlight(b *strings.Builder, line string) {
 	b.Grow(len(line) + 32)
 	for i := 0; i < len(line); {
 		c := line[i]
@@ -130,23 +143,23 @@ func (p paints) highlight(b *strings.Builder, line string) {
 		case c == '"':
 			j := stringEnd(line, i)
 			if k := skipSpaces(line, j); k < len(line) && line[k] == ':' {
-				p.key.Append(b, line[i:j])
+				h.key.Append(b, line[i:j])
 			} else {
-				p.str.Append(b, line[i:j])
+				h.str.Append(b, line[i:j])
 			}
 			i = j
 		case c == '-' || (c >= '0' && c <= '9'):
 			j := wordEnd(line, i)
-			p.num.Append(b, line[i:j])
+			h.num.Append(b, line[i:j])
 			i = j
 		case c >= 'a' && c <= 'z':
 			j := wordEnd(line, i)
-			p.lit.Append(b, line[i:j])
+			h.lit.Append(b, line[i:j])
 			i = j
 		default:
 			// Punctuation, and the "…" of a cut line.
 			_, n := utf8.DecodeRuneInString(line[i:])
-			p.punct.Append(b, line[i:i+n])
+			h.punct.Append(b, line[i:i+n])
 			i += n
 		}
 	}
@@ -201,6 +214,12 @@ func isJSON(contentType string, body []byte) bool {
 func looksLikeJSON(body []byte) bool {
 	body = bytes.TrimLeft(body, " \t\r\n")
 	return len(body) > 0 && (body[0] == '{' || body[0] == '[')
+}
+
+// LooksLikeJSON reports whether s starts like a JSON object or array.
+func LooksLikeJSON(s string) bool {
+	s = strings.TrimLeft(s, " \t\r\n")
+	return s != "" && (s[0] == '{' || s[0] == '[')
 }
 
 func isBinary(body []byte) bool {

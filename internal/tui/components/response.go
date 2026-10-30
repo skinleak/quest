@@ -64,7 +64,7 @@ type Response struct {
 	offset [tabCount]int
 	width  int
 	height int // lines of the whole pane
-	styles theme.Styles
+	styles *theme.Styles
 }
 
 // SetSending shows that a request is in flight. The previous response
@@ -78,7 +78,7 @@ func (r *Response) SetSending() {
 
 // SetResult shows a finished request: a response with its formatted body,
 // or an error. A cancelled request brings back what was shown before.
-func (r *Response) SetResult(st theme.Styles, resp *request.Response, doc *format.Doc, err error) {
+func (r *Response) SetResult(st *theme.Styles, resp *request.Response, doc *format.Doc, err error) {
 	switch {
 	case errors.Is(err, context.Canceled):
 		r.state = r.prev
@@ -170,7 +170,7 @@ func (r *Response) lineCount() int {
 }
 
 // View renders the pane into at most its height lines.
-func (r *Response) View(st theme.Styles, width int, focused bool) []string {
+func (r *Response) View(st *theme.Styles, width int, focused bool) []string {
 	if r.height <= 0 {
 		return nil
 	}
@@ -207,7 +207,7 @@ func (r *Response) View(st theme.Styles, width int, focused bool) []string {
 	return out
 }
 
-func (r *Response) statusLine(st theme.Styles, width int) string {
+func (r *Response) statusLine(st *theme.Styles, width int) string {
 	switch r.state {
 	case stateIdle:
 		return Fit(st.Subtle.Render("nothing sent yet"), width, false)
@@ -238,7 +238,7 @@ func (r *Response) statusLine(st theme.Styles, width int) string {
 }
 
 // errorLines wraps the error message under the status line.
-func (r *Response) errorLines(st theme.Styles, width int) []string {
+func (r *Response) errorLines(st *theme.Styles, width int) []string {
 	room := r.height - 2
 	if room <= 0 {
 		return nil
@@ -252,16 +252,16 @@ func (r *Response) errorLines(st theme.Styles, width int) []string {
 }
 
 // Tabs renders tab labels with the active one bold.
-func Tabs(st theme.Styles, names []string, active int) string {
+func Tabs(st *theme.Styles, names []string, active int) string {
 	var b strings.Builder
 	for i, n := range names {
 		if i > 0 {
 			b.WriteString("  ")
 		}
 		if i == active {
-			b.WriteString(st.TabActive.Render(n))
+			st.P.TabActive.Append(&b, n)
 		} else {
-			b.WriteString(st.Tab.Render(n))
+			st.P.Tab.Append(&b, n)
 		}
 	}
 	return b.String()
@@ -270,7 +270,7 @@ func Tabs(st theme.Styles, names []string, active int) string {
 // headerLines renders the headers sorted by name, one per value, with
 // the values aligned. Long values wrap under themselves, so cookies and
 // policies can be read in full.
-func headerLines(st theme.Styles, header http.Header, width int) []string {
+func headerLines(st *theme.Styles, header http.Header, width int) []string {
 	names := make([]string, 0, len(header))
 	nameW := 0
 	for n := range header {
@@ -306,7 +306,7 @@ func headerLines(st theme.Styles, header http.Header, width int) []string {
 // timingLines draws the phases that happened as a waterfall, then what
 // is known about the connection: server, protocol, certificate and
 // redirects.
-func timingLines(st theme.Styles, resp *request.Response, width int, now time.Time) []string {
+func timingLines(st *theme.Styles, resp *request.Response, width int, now time.Time) []string {
 	out := waterfall(st, resp.Timing, width)
 	label := func(s string) string { return st.Muted.Render(Fit(s, labelW, true)) }
 	sep := st.Subtle.Render(" " + theme.IconSep + " ")
@@ -347,7 +347,7 @@ func timingLines(st theme.Styles, resp *request.Response, width int, now time.Ti
 
 // expiry says how long a certificate stays valid: a warning within two
 // weeks, an error once expired.
-func expiry(st theme.Styles, t, now time.Time) string {
+func expiry(st *theme.Styles, t, now time.Time) string {
 	days := int(t.Sub(now).Hours() / 24)
 	switch {
 	case !t.After(now):
@@ -366,7 +366,7 @@ func expiry(st theme.Styles, t, now time.Time) string {
 // phase started, scaled so the whole request spans the bar column. Wait
 // and transfer are anchored at the end, which keeps them right when the
 // request was sent some time after the connection was ready.
-func waterfall(st theme.Styles, t request.Timing, width int) []string {
+func waterfall(st *theme.Styles, t request.Timing, width int) []string {
 	const valueW, gap = 9, 2
 	phases := []struct {
 		name     string

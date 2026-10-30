@@ -25,7 +25,7 @@ type responseMsg struct {
 // The first chunk is highlighted here too, so the first frame is colored.
 // Only the method, host and outcome are logged: URLs and headers can carry
 // secrets.
-func send(ctx context.Context, eng *engine.Engine, log *slog.Logger, st theme.Styles, seq int, r request.Request) tea.Cmd {
+func send(ctx context.Context, eng *engine.Engine, log *slog.Logger, st *theme.Styles, seq int, r request.Request) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := eng.Do(ctx, r)
 		host := ""

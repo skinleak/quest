@@ -60,10 +60,13 @@ internal/core/              no imports from internal/tui, ever; it will also pow
                             client for the redirect policy, capped body read, cancellation
     trace.go                httptrace hooks → DNS/connect/TLS/TTFB/transfer/total
 internal/tui/
-  app/                      root Model: key routing, focus (method row, URL, response), frame assembly
+  app/                      root Model: key routing, focus (method row, URL, request tabs,
+                            response), frame assembly
     msgs.go                 tea.Msg types and the tea.Cmd that sends and formats a request
   components/               panes and widgets; each renders lines already cut to its width
-    editor.go               method row (every method, active one colored) + URL input
+    editor.go               method row (every method, active one colored), URL input, and
+                            params/headers/body tabs; params are synced with the URL's query
+    textarea.go             multi-line body editor: no wrapping, renders visible lines only
     response.go             status line, body/headers/timing tabs, windowed scrolling
     help.go                 status-bar hints and the ? overlay, generated from keys
     text.go, units.go       Fit/Lines/Spread; duration and size formatting
@@ -74,9 +77,10 @@ internal/tui/
 
 ### Data flow of a request
 
-1. `enter` in the URL or `ctrl+s` anywhere → `Model.send()` validates the
-   edited request (errors go to the footer), cancels any request in
-   flight, bumps `seq`, and returns `send(...)` as a `tea.Cmd`.
+1. `enter` in the URL or `ctrl+s` anywhere (also while editing a row or
+   the body) → `Model.send()` validates the edited request (errors go to
+   the footer), cancels any request in flight, bumps `seq`, and returns
+   `send(...)` as a `tea.Cmd`.
 2. The command runs `engine.Do`, then `format.New` on the body and
    highlights the first chunk, all off the UI goroutine, and returns a
    `responseMsg`.
@@ -136,7 +140,25 @@ internal/tui/
   URL input takes printable keys. `f1` is help and `ctrl+c` quits while
   typing, because `?` and `q` are URL characters.
 - **No collections and no sidebar**: dropped by the owner; the request
-  and response take the full width.
+  and response take the full width. A project's own endpoints (found in
+  OpenAPI specs and `.http` files) will be picked from a `ctrl+p`
+  overlay instead; chosen with the owner.
+- **Params are the URL's query**, as in Postman: the params tab lists it
+  raw (nothing decoded), editing a param rewrites it, and typing in the
+  URL updates the list. A disabled param keeps its row but leaves the URL.
+  A typed param only escapes what would break the query (`& # =` and
+  space), so the URL stays readable.
+- **Rows are edited as one line**, `name: value` for headers and
+  `name=value` for params, so a pasted header just works. Edits apply as
+  you type; `esc` (or `enter`) ends editing, and a row left empty goes.
+- **Own body editor, not `bubbles/textarea`**: that one renders and wraps
+  the whole buffer on every key and caps input at 10,000 lines of 500
+  columns. `TextArea` never wraps and renders only visible lines; tabs
+  become two spaces so every rune is one cell. A body that starts with
+  `{` or `[` is highlighted line by line with `format.Highlighter`.
+- **The request area grows with its content**: as many lines as its
+  longest tab (so switching tabs doesn't move the response), up to two
+  fifths of the free height and at most 12 lines.
 - **Footer hints leave out self-explanatory keys** (arrows, page up and
   down, top and bottom); the `?` overlay lists every binding.
 - **Timing tab** shows only the phases that happened (a reused connection
@@ -171,6 +193,10 @@ internal/tui/
 - **`View` assembles the frame line by line** from parts already cut to
   width. Lip Gloss's `Width`, `Height`, `Join*` re-measure every cell and
   made qitlog's frames 3× slower. Lines are not padded on the right.
+- **`theme.Styles` and `keys.KeyMap` are shared by pointer.** Bubble Tea
+  copies the `Model` on every message and `View`; with styles inside it
+  was 57 KB per copy and frames were 2× slower. Keep big immutable things
+  behind pointers and pass `*theme.Styles` to render helpers.
 - **Hot paths color text with `theme.Paint`** (escape codes taken from one
   `Render`), not a `Render` per token.
 - **Lip Gloss renders no colors in tests** (no terminal), so a style
@@ -195,7 +221,7 @@ Measured with `make bench` (Intel Core Ultra 7 268V). Keep within ~2×.
 | Package init, whole binary | ~1 ms | — |
 | `format.New`, 1 MiB compact JSON (indent, split, sanitize) | ~13 ms | background |
 | Highlight one 256-line chunk | ~20 µs | UI goroutine |
-| Keypress + full 220×60 frame, 2 MiB JSON response | ~60 µs | UI goroutine |
+| Keypress + full 220×60 frame, 2 MiB JSON response | ~45 µs | UI goroutine |
 | `Engine.Do`, 64 KiB body, pooled local connection | ~0.2 ms | background |
 
 Anything proportional to body size belongs in the `tea.Cmd`, not in
@@ -226,7 +252,8 @@ nothing to bump in code.
 ## Out of scope (do not build unless the owner asks)
 
 Scripting and tests, auth helpers (OAuth etc.), WebSocket, gRPC, GraphQL,
-Postman import/export, collections, cloud sync, plugins, mouse-heavy UX.
+Postman import/export, collections (beyond endpoints found in the
+project), cloud sync, plugins, mouse-heavy UX.
 Leave clean seams (core stays UI-free), but no speculative abstractions.
 
 ## Roadmap
@@ -236,8 +263,16 @@ status bar, help overlay and minimum size; method + URL editor; engine with
 timing and cancellation; response viewer with highlighted JSON, headers
 and a timing waterfall.
 
-Next, in order:
-1. Params, headers and body tabs in the request editor.
-2. Environments: `internal/core/env`, `{{var}}` interpolation in URL,
-   params, headers and body; `e` to switch.
-3. History: last N requests in a local file.
+Done since: params, headers and body tabs in the request editor.
+
+Next, in order (agreed with the owner):
+1. Endpoint discovery: `internal/core/discover` finds OpenAPI specs (JSON
+   and YAML) and `.http` files in the working directory, in a `tea.Cmd`,
+   skipping `.git`, `node_modules`, `vendor` and the like. A `ctrl+p`
+   overlay lists the endpoints, filtered as you type; `enter` loads one
+   into the editor. Typing any URL keeps working.
+2. History in `$XDG_CACHE_HOME/quest/`, per project directory (nothing is
+   written into the repo); the picker shows each endpoint's last status
+   and response time.
+3. Environments: `{{var}}` interpolation in URL, params, headers and
+   body; base URLs seeded from OpenAPI `servers`; `e` to switch.

@@ -60,6 +60,7 @@ const (
 	IconBar      = "━"
 	IconEllipsis = "…"
 	IconArrow    = "→"
+	IconPointer  = "›"
 )
 
 // Styles are the concrete Lip Gloss styles derived from a Palette.
@@ -76,6 +77,9 @@ type Styles struct {
 	Title      lipgloss.Style // a pane's title
 	TitleFocus lipgloss.Style // the focused pane's title
 	Cursor     lipgloss.Style
+	Caret      lipgloss.Style // the body editor's block cursor
+	Pointer    lipgloss.Style // marks the selected row
+	Off        lipgloss.Style // a disabled param or header, struck through
 
 	Tab       lipgloss.Style
 	TabActive lipgloss.Style
@@ -111,10 +115,32 @@ type Styles struct {
 	JSONNumber  lipgloss.Style
 	JSONLiteral lipgloss.Style // true, false, null
 	JSONPunct   lipgloss.Style
+
+	// Paints of the styles drawn on every frame.
+	P Paints
 }
 
-// New builds Styles from a Palette.
-func New(p Palette) Styles {
+// Paints are styles drawn on every frame, taken apart once in New so a
+// frame needs no Render call for them.
+type Paints struct {
+	Title, TitleFocus, Tab, TabActive, Subtle Paint
+}
+
+// New builds Styles from a Palette. Styles are large and never change, so
+// they are shared by pointer rather than copied into every model and call.
+func New(p Palette) *Styles {
+	st := newStyles(p)
+	st.P = Paints{
+		Title:      PaintOf(st.Title),
+		TitleFocus: PaintOf(st.TitleFocus),
+		Tab:        PaintOf(st.Tab),
+		TabActive:  PaintOf(st.TabActive),
+		Subtle:     PaintOf(st.Subtle),
+	}
+	return &st
+}
+
+func newStyles(p Palette) Styles {
 	s := lipgloss.NewStyle
 	return Styles{
 		Brand:  s().Foreground(p.Accent).Bold(true),
@@ -126,6 +152,9 @@ func New(p Palette) Styles {
 		Title:      s().Foreground(p.Muted),
 		TitleFocus: s().Foreground(p.Accent).Bold(true),
 		Cursor:     s().Foreground(p.Accent).Bold(true),
+		Caret:      s().Reverse(true),
+		Pointer:    s().Foreground(p.Accent).Bold(true),
+		Off:        s().Foreground(p.Muted).Faint(true).Strikethrough(true),
 
 		Tab:       s().Foreground(p.Muted),
 		TabActive: s().Foreground(p.Text).Bold(true),
@@ -162,10 +191,10 @@ func New(p Palette) Styles {
 }
 
 // Default returns the styles for the default palette.
-func Default() Styles { return New(DefaultPalette()) }
+func Default() *Styles { return New(DefaultPalette()) }
 
 // Method returns the style for an HTTP method.
-func (s Styles) Method(m string) lipgloss.Style {
+func (s *Styles) Method(m string) lipgloss.Style {
 	switch m {
 	case "GET":
 		return s.MethodGet
@@ -183,12 +212,12 @@ func (s Styles) Method(m string) lipgloss.Style {
 
 // MethodPicked is the active method while the method row has focus:
 // underlined, so the focus shows without color too.
-func (s Styles) MethodPicked(m string) lipgloss.Style {
+func (s *Styles) MethodPicked(m string) lipgloss.Style {
 	return s.Method(m).Underline(true)
 }
 
 // Status returns the style for an HTTP status code.
-func (s Styles) Status(code int) lipgloss.Style {
+func (s *Styles) Status(code int) lipgloss.Style {
 	switch {
 	case code >= 500:
 		return s.Status5xx

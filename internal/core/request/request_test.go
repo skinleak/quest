@@ -51,6 +51,7 @@ func TestFullURL(t *testing.T) {
 		{"repeats keys", "https://x.io", []KV{{Key: "a", Value: "1"}, {Key: "a", Value: "2"}}, "https://x.io?a=1&a=2"},
 		{"skips disabled", "https://x.io", []KV{{Key: "a", Value: "1", Disabled: true}}, "https://x.io"},
 		{"escapes", "https://x.io", []KV{{Key: "q", Value: "a b&c"}}, "https://x.io?q=a+b%26c"},
+		{"typed spaces", "https://x.io/a b?q=x y", nil, "https://x.io/a%20b?q=x%20y"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -22,7 +22,7 @@ func BenchmarkScrollFrame(b *testing.B) {
 	m = typeText(b, m, srv.URL)
 	m = pump(b, m, keyPress("enter"))
 	m = pump(b, m, tea.WindowSizeMsg{Width: 220, Height: 60})
-	m = pump(b, m, keyPress("tab"))
+	m = focusPane(b, m, paneResponse)
 	down, up := keyPress("ctrl+d"), keyPress("ctrl+u")
 	if v := plainView(m); !strings.Contains(v, "200 OK") || !strings.Contains(v, "MB") {
 		b.Fatalf("response not loaded:\n%s", v)

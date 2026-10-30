@@ -52,10 +52,15 @@ type Model struct {
 	width, height int
 	focus         pane
 	showHelp      bool
+	showPicker    bool
 
 	editor   components.Editor
 	response components.Response
 	help     components.Help
+	picker   components.Picker
+
+	root      string // the project directory searched for endpoints
+	searching bool   // a search for endpoints is running
 
 	seq    int                // id of the latest request; older results are dropped
 	cancel context.CancelFunc // cancels the request in flight, if any
@@ -65,25 +70,30 @@ type Model struct {
 }
 
 // New returns the root model. Requests go through eng; log receives
-// internal diagnostics and never writes to the terminal.
-func New(eng *engine.Engine, log *slog.Logger) Model {
+// internal diagnostics and never writes to the terminal. Endpoints are
+// looked for in root, shown as rootName.
+func New(eng *engine.Engine, log *slog.Logger, root, rootName string) Model {
 	st := theme.Default()
 	m := Model{
-		engine: eng,
-		log:    log,
-		styles: st,
-		keys:   keys.Default(),
-		focus:  paneURL,
-		editor: components.NewEditor(st),
-		help:   components.NewHelp(st),
+		engine:    eng,
+		log:       log,
+		styles:    st,
+		keys:      keys.Default(),
+		focus:     paneURL,
+		editor:    components.NewEditor(st),
+		help:      components.NewHelp(st),
+		picker:    components.NewPicker(st, rootName),
+		root:      root,
+		searching: true, // started by Init
 	}
+	m.picker.SetSearching()
 	m.editor.Focus()
 	return m
 }
 
-// Init implements tea.Model. Nothing is loaded at startup, so the first
-// frame is drawn at once.
-func (m Model) Init() tea.Cmd { return nil }
+// Init implements tea.Model. It starts the search for the project's
+// endpoints in the background, so the first frame is drawn at once.
+func (m Model) Init() tea.Cmd { return search(m.root, m.log) }
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -94,6 +104,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case responseMsg:
 		m.applyResponse(msg)
+		return m, nil
+	case discoveredMsg:
+		m.searching = false
+		m.picker.SetResult(msg.res)
 		return m, nil
 	case tea.KeyMsg:
 		m, cmd := m.handleKey(msg)
@@ -121,6 +135,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.showPicker {
+		return m, m.handlePickerKey(msg)
+	}
 
 	if m.response.Sending() && key.Matches(msg, k.Cancel) {
 		m.cancelRequest()
@@ -143,6 +160,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case key.Matches(msg, k.InputHelp):
 		m.openHelp()
 		return m, nil
+	case key.Matches(msg, k.Endpoints):
+		return m, m.openPicker()
 	}
 
 	if m.focus == paneURL {
@@ -185,6 +204,52 @@ func (m *Model) handleMethodKey(msg tea.KeyMsg) tea.Cmd {
 		return m.setFocus(paneURL)
 	}
 	return nil
+}
+
+// handlePickerKey works the endpoint list, where printable keys filter.
+func (m *Model) handlePickerKey(msg tea.KeyMsg) tea.Cmd {
+	k, p := m.keys, &m.picker
+	rows := max(1, m.bodyHeight()-3)
+	switch {
+	case key.Matches(msg, k.InputQuit):
+		return m.quit()
+	case key.Matches(msg, k.CloseList):
+		m.showPicker = false
+	case key.Matches(msg, k.InputHelp):
+		m.openHelp()
+	case key.Matches(msg, k.Choose):
+		ep, ok := p.Selected()
+		if !ok {
+			return nil
+		}
+		m.editor.SetRequest(ep.Request)
+		m.showPicker = false
+		return m.setFocus(paneURL)
+	case key.Matches(msg, k.PickUp):
+		p.Move(-1)
+	case key.Matches(msg, k.PickDown):
+		p.Move(1)
+	case key.Matches(msg, k.PageUp):
+		p.Move(-rows)
+	case key.Matches(msg, k.PageDown):
+		p.Move(rows)
+	default:
+		return p.Update(msg)
+	}
+	return nil
+}
+
+// openPicker shows the endpoint list and searches again, so specs changed
+// meanwhile show up; the last result is shown until the new one is in.
+func (m *Model) openPicker() tea.Cmd {
+	m.showPicker = true
+	cmd := m.picker.Open()
+	if m.searching {
+		return cmd
+	}
+	m.searching = true
+	m.picker.SetSearching()
+	return tea.Batch(cmd, search(m.root, m.log))
 }
 
 // handleRequestKey works the params, headers and body tabs.
@@ -307,6 +372,8 @@ func (m Model) tooSmall() bool  { return m.width < minWidth || m.height < minHei
 func (m *Model) resize() {
 	w := m.innerWidth()
 	m.editor.SetWidth(w)
+	m.picker.SetWidth(w)
+	m.picker.SetHeight(m.bodyHeight())
 	// The editor, a blank line, its tab content, a blank line, then at
 	// least the response's title.
 	room := m.bodyHeight() - components.EditorHeight - 2
@@ -327,9 +394,12 @@ func (m Model) View() string {
 	}
 	bodyH := m.bodyHeight()
 	var body []string
-	if m.showHelp {
+	switch {
+	case m.showHelp:
 		body = m.help.Overlay(m.styles, m.keys.FullHelp(), m.innerWidth(), bodyH)
-	} else {
+	case m.showPicker:
+		body = m.picker.View(m.styles, m.innerWidth(), bodyH)
+	default:
 		body = m.bodyLines()
 	}
 
@@ -387,6 +457,8 @@ func (m Model) footerView() string {
 		return components.Fit(m.styles.Error.Render(m.message), w, false)
 	case m.message != "":
 		return components.Fit(m.styles.Info.Render(m.message), w, false)
+	case m.showPicker:
+		return m.help.Hints(m.keys.PickerHelp(), w)
 	case m.response.Sending():
 		return m.help.Hints(m.keys.SendingHelp(), w)
 	}

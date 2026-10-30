@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/skinleak/quest/internal/core/discover"
 	"github.com/skinleak/quest/internal/core/engine"
 	"github.com/skinleak/quest/internal/core/request"
 	"github.com/skinleak/quest/internal/tui/format"
@@ -41,5 +43,31 @@ func send(ctx context.Context, eng *engine.Engine, log *slog.Logger, st *theme.S
 		doc := format.New(resp.Body, resp.ContentType, st)
 		doc.Highlight(0, format.ChunkLines)
 		return responseMsg{seq: seq, resp: resp, doc: doc}
+	}
+}
+
+// searchTimeout bounds a search for endpoints, for very large trees.
+const searchTimeout = 10 * time.Second
+
+// discoveredMsg is a finished search for the project's endpoints.
+type discoveredMsg struct {
+	res discover.Result
+}
+
+// search looks for endpoints under root off the UI goroutine. A search
+// that times out returns what it found so far, marked partial. Only counts
+// are logged.
+func search(root string, log *slog.Logger) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+		defer cancel()
+		start := time.Now()
+		res, err := discover.Find(ctx, root)
+		if err != nil {
+			res.Partial = true
+		}
+		log.Debug("endpoints found", "count", len(res.Endpoints), "files", res.Files,
+			"unreadable", len(res.Failed), "partial", res.Partial, "took", time.Since(start))
+		return discoveredMsg{res: res}
 	}
 }

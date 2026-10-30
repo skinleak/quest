@@ -23,6 +23,10 @@ func TestValidate(t *testing.T) {
 		{"header name with colon", Request{Method: "GET", URL: "x.io", Headers: []KV{{Key: "a:b"}}}, ErrInvalidHeader},
 		{"header value with newline", Request{Method: "GET", URL: "x.io", Headers: []KV{{Key: "a", Value: "1\r\nX: y"}}}, ErrInvalidHeader},
 		{"empty param name", Request{Method: "GET", URL: "x.io", Params: []KV{{Value: "v"}}}, ErrEmptyKey},
+		{"path placeholder", Request{Method: "GET", URL: "https://x.io/users/{id}"}, ErrPlaceholder},
+		{"variable", Request{Method: "GET", URL: "{{baseUrl}}/users"}, ErrPlaceholder},
+		{"variable in query", Request{Method: "GET", URL: "x.io/?t={{token}}"}, ErrPlaceholder},
+		{"braces in query", Request{Method: "GET", URL: `x.io/?filter={"a":1}`}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

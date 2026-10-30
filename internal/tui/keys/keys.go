@@ -30,6 +30,13 @@ type KeyMap struct {
 	Toggle key.Binding
 	Done   key.Binding
 
+	// In the endpoint list, where printable keys filter.
+	Endpoints key.Binding
+	Choose    key.Binding
+	PickUp    key.Binding
+	PickDown  key.Binding
+	CloseList key.Binding
+
 	Up       key.Binding
 	Down     key.Binding
 	PageUp   key.Binding
@@ -105,6 +112,26 @@ func Default() *KeyMap {
 			key.WithKeys("esc"),
 			key.WithHelp("esc", "done editing"),
 		),
+		Endpoints: key.NewBinding(
+			key.WithKeys("ctrl+p"),
+			key.WithHelp("ctrl+p", "endpoints"),
+		),
+		Choose: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "load endpoint"),
+		),
+		PickUp: key.NewBinding(
+			key.WithKeys("up", "ctrl+k"),
+			key.WithHelp("↑", "previous endpoint"),
+		),
+		PickDown: key.NewBinding(
+			key.WithKeys("down", "ctrl+j"),
+			key.WithHelp("↓", "next endpoint"),
+		),
+		CloseList: key.NewBinding(
+			key.WithKeys("esc", "ctrl+p"),
+			key.WithHelp("esc", "close list"),
+		),
 		Up: key.NewBinding(
 			key.WithKeys("k", "up"),
 			key.WithHelp("↑/k", "up"),
@@ -167,12 +194,12 @@ func Default() *KeyMap {
 
 // URLHelp is the hint while the URL input has focus.
 func (k *KeyMap) URLHelp() []key.Binding {
-	return []key.Binding{k.Submit, k.Method, k.NextPane, k.InputHelp, k.InputQuit}
+	return []key.Binding{k.Submit, k.Endpoints, k.Method, k.NextPane, k.InputHelp, k.InputQuit}
 }
 
 // MethodHelp is the hint while the method row has focus.
 func (k *KeyMap) MethodHelp() []key.Binding {
-	return []key.Binding{k.NextMethod, k.EditURL, k.Send, k.Help, k.Quit}
+	return []key.Binding{k.NextMethod, k.EditURL, k.Send, k.Endpoints, k.Help, k.Quit}
 }
 
 // ListHelp is the hint on the params and headers tabs.
@@ -192,7 +219,12 @@ func (k *KeyMap) EditingHelp() []key.Binding {
 
 // ResponseHelp is the hint while the response pane has focus.
 func (k *KeyMap) ResponseHelp() []key.Binding {
-	return []key.Binding{k.Send, k.NextTab, k.NextPane, k.Help, k.Quit}
+	return []key.Binding{k.Send, k.NextTab, k.NextPane, k.Endpoints, k.Help, k.Quit}
+}
+
+// PickerHelp is the hint while the endpoint list is open.
+func (k *KeyMap) PickerHelp() []key.Binding {
+	return []key.Binding{k.Choose, k.CloseList, k.InputHelp, k.InputQuit}
 }
 
 // SendingHelp is the hint while a request is in flight.
@@ -206,6 +238,7 @@ func (k *KeyMap) FullHelp() [][]key.Binding {
 		{k.Send, k.Submit, k.Cancel, k.NextPane, k.PrevPane},
 		{k.Method, k.PrevMethod, k.NextMethod, k.EditURL},
 		{k.Edit, k.Add, k.Delete, k.Toggle, k.Done},
+		{k.Endpoints, k.Choose, k.PickUp, k.PickDown, k.CloseList},
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom, k.PrevTab, k.NextTab},
 		{k.Help, k.InputHelp, k.Quit, k.InputQuit},
 	}

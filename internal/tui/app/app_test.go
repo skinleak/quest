@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,8 +20,28 @@ import (
 
 func newTestModel(t testing.TB) Model {
 	t.Helper()
-	m := New(engine.New(engine.Options{}), slog.New(slog.DiscardHandler))
-	return pump(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	return newModelIn(t, t.TempDir())
+}
+
+// newModelIn returns a model for a project in root, with its search for
+// endpoints done.
+func newModelIn(t testing.TB, root string) Model {
+	t.Helper()
+	m := New(engine.New(engine.Options{}), slog.New(slog.DiscardHandler), root, "project")
+	m = pump(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	return pump(t, m, m.Init()())
+}
+
+// projectWith returns a directory holding files, by name.
+func projectWith(t testing.TB, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
 }
 
 // pump delivers msg and synchronously runs the resulting commands.
@@ -71,6 +93,8 @@ func keyPress(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 	case "down":
 		return tea.KeyMsg{Type: tea.KeyDown}
+	case "ctrl+p":
+		return tea.KeyMsg{Type: tea.KeyCtrlP}
 	case "backspace":
 		return tea.KeyMsg{Type: tea.KeyBackspace}
 	}
@@ -293,14 +317,25 @@ func TestViewFitsWindow(t *testing.T) {
 	loaded := pump(t, base, keyPress("enter"))
 
 	modes := map[string]func() Model{
-		"empty":    func() Model { return base },
-		"help":     func() Model { return pump(t, focusPane(t, base, paneResponse), keyPress("?")) },
-		"body":     func() Model { return focusPane(t, loaded, paneResponse) },
-		"scrolled": func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("G")) },
-		"headers":  func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("l")) },
-		"timing":   func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("h")) },
-		"method":   func() Model { return pump(t, base, keyPress("shift+tab")) },
-		"params":   func() Model { return focusPane(t, base, paneRequest) },
+		"empty":        func() Model { return base },
+		"help":         func() Model { return pump(t, focusPane(t, base, paneResponse), keyPress("?")) },
+		"body":         func() Model { return focusPane(t, loaded, paneResponse) },
+		"scrolled":     func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("G")) },
+		"headers":      func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("l")) },
+		"timing":       func() Model { return pump(t, focusPane(t, loaded, paneResponse), keyPress("h")) },
+		"method":       func() Model { return pump(t, base, keyPress("shift+tab")) },
+		"no endpoints": func() Model { return pump(t, base, keyPress("ctrl+p")) },
+		"searching": func() Model {
+			m := New(engine.New(engine.Options{}), slog.New(slog.DiscardHandler), t.TempDir(), "project")
+			next, _ := m.Update(keyPress("ctrl+p"))
+			return next.(Model)
+		},
+		"endpoints": func() Model {
+			m := newModelIn(t, projectWith(t, map[string]string{"api.http": strings.Repeat(
+				"### a request with a rather long name that will not fit\nGET https://x.io/a/very/long/path/that/does/not/fit\n\n", 60)}))
+			return pump(t, m, keyPress("ctrl+p"))
+		},
+		"params": func() Model { return focusPane(t, base, paneRequest) },
 		"editing": func() Model {
 			m := pump(t, focusPane(t, loaded, paneRequest), keyPress("a"))
 			return typeText(t, m, "Authorization: Bearer "+strings.Repeat("x", 300))
@@ -421,6 +456,75 @@ func TestRequestAreaGrows(t *testing.T) {
 	}
 	if got := m.editor.Height(); got != before+2 {
 		t.Errorf("editor height %d after 3 headers, want %d", got, before+2)
+	}
+}
+
+const usersSpec = `openapi: 3.0.0
+servers: [{url: "%s"}]
+paths:
+  /users:
+    get: {summary: List users}
+    post:
+      summary: Create a user
+      requestBody:
+        content:
+          application/json:
+            schema: {properties: {name: {type: string, example: ada}}}
+  /users/{id}:
+    get: {summary: Get a user}
+`
+
+func TestPickEndpoint(t *testing.T) {
+	srv := echoServer(t)
+	m := newModelIn(t, projectWith(t, map[string]string{
+		"openapi.yaml":  strings.Replace(usersSpec, "%s", srv.URL, 1),
+		"requests.http": "### Health\nGET " + srv.URL + "/health\n",
+	}))
+	m = pump(t, m, keyPress("ctrl+p"))
+	if v := plainView(m); !strings.Contains(v, "4 endpoints") || !strings.Contains(v, "GET      /users/{id}  Get a user") ||
+		!strings.Contains(v, "requests.http:2") {
+		t.Fatalf("picker:\n%s", v)
+	}
+	m = typeText(t, m, "post us")
+	if v := plainView(m); !strings.Contains(v, "1 of 4") || strings.Contains(v, "List users") {
+		t.Fatalf("filtered:\n%s", v)
+	}
+	m = pump(t, m, keyPress("enter"))
+	if m.showPicker || m.focus != paneURL {
+		t.Fatalf("picker open %v, focus %d", m.showPicker, m.focus)
+	}
+	m = pump(t, m, keyPress("enter")) // send
+	if v := plainView(m); !strings.Contains(v, `"name": "ada"`) || !strings.Contains(v, "200 OK") {
+		t.Errorf("sent:\n%s", v)
+	}
+	if r := m.editor.Request(); r.Method != http.MethodPost || r.URL != srv.URL+"/users" {
+		t.Errorf("request = %s %s", r.Method, r.URL)
+	}
+}
+
+func TestPlaceholderIsReported(t *testing.T) {
+	// A closed local port: should the check fail, nothing leaves the machine.
+	m := newModelIn(t, projectWith(t, map[string]string{"openapi.yaml": strings.Replace(usersSpec, "%s", "http://127.0.0.1:1", 1)}))
+	m = pump(t, m, keyPress("ctrl+p"))
+	m = typeText(t, m, "{id}")
+	m = pump(t, m, keyPress("enter"))
+	m = pump(t, m, keyPress("enter"))
+	if v := plainView(m); !strings.Contains(v, "fill in {id}") || m.response.Sending() {
+		t.Errorf("placeholder sent:\n%s", v)
+	}
+}
+
+func TestPickerKeepsTypedRequest(t *testing.T) {
+	m := newTestModel(t)
+	m = typeText(t, m, "x.io/a")
+	m = pump(t, m, keyPress("ctrl+p"))
+	if v := plainView(m); !strings.Contains(v, "no endpoints found") || !strings.Contains(v, "in project") {
+		t.Errorf("empty picker:\n%s", v)
+	}
+	m = typeText(t, m, "q") // filters, does not quit
+	m = pump(t, m, keyPress("esc"))
+	if m.showPicker || m.editor.Request().URL != "x.io/a" {
+		t.Errorf("after esc: picker %v, url %q", m.showPicker, m.editor.Request().URL)
 	}
 }
 

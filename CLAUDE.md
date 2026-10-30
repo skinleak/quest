@@ -46,7 +46,13 @@ Logs go to `$XDG_CACHE_HOME/quest/quest.log` (`~/.cache/quest/quest.log`);
 
 Go 1.26+, Bubble Tea v1, Bubbles v1 (`key`, `help`, `textinput`), Lip Gloss
 v1, `charmbracelet/x/ansi`, `skinleak/gloq` for logging, `net/http` for the
-engine. Every new dependency needs a reason written here.
+engine, `go.yaml.in/yaml/v3` for OpenAPI specs. Every new dependency needs
+a reason written here.
+
+- **`go.yaml.in/yaml/v3`**: most OpenAPI specs are YAML. It is the YAML
+  org's maintained continuation of `gopkg.in/yaml.v3`, has no
+  dependencies, adds 0.05 ms of init, and parses JSON specs too, so both
+  go through one `yaml.Node` path that keeps the spec's key order.
 
 ## Architecture
 
@@ -59,14 +65,19 @@ internal/core/              no imports from internal/tui, ever; it will also pow
   engine/                   Engine.Do: net/http with a shared pooled transport, per-request
                             client for the redirect policy, capped body read, cancellation
     trace.go                httptrace hooks → DNS/connect/TLS/TTFB/transfer/total
+  discover/                 Find: walks a project for OpenAPI specs and .http files → Endpoints
+    openapi.go              OpenAPI 2/3 on yaml.Node: servers, params, $ref, example bodies
+    httpfile.go             .http/.rest files: ### blocks, @variables, headers, body
 internal/tui/
   app/                      root Model: key routing, focus (method row, URL, request tabs,
                             response), frame assembly
-    msgs.go                 tea.Msg types and the tea.Cmd that sends and formats a request
+    msgs.go                 tea.Msg types; the tea.Cmds that send a request and search
+                            for endpoints
   components/               panes and widgets; each renders lines already cut to its width
     editor.go               method row (every method, active one colored), URL input, and
                             params/headers/body tabs; params are synced with the URL's query
     textarea.go             multi-line body editor: no wrapping, renders visible lines only
+    picker.go               the ctrl+p endpoint list: filter input, aligned rows
     response.go             status line, body/headers/timing tabs, windowed scrolling
     help.go                 status-bar hints and the ? overlay, generated from keys
     text.go, units.go       Fit/Lines/Spread; duration and size formatting
@@ -141,8 +152,29 @@ internal/tui/
   typing, because `?` and `q` are URL characters.
 - **No collections and no sidebar**: dropped by the owner; the request
   and response take the full width. A project's own endpoints (found in
-  OpenAPI specs and `.http` files) will be picked from a `ctrl+p`
-  overlay instead; chosen with the owner.
+  OpenAPI specs and `.http` files) are picked from the `ctrl+p` list
+  instead; chosen with the owner.
+- **Endpoints come from the project**, never from a quest file: OpenAPI
+  specs (found by name, or by an `openapi:`/`swagger:` key in their first
+  KiB) and `.http`/`.rest` files under the directory quest starts in.
+  `Init` starts the search, and every `ctrl+p` searches again (the last
+  list shows meanwhile), so edited specs show up. The walk skips
+  dot-directories and dependency/build dirs and stops after 20,000
+  entries or 10 s ("search stopped early"); files over 16 MiB are skipped.
+  Reading routes from source code was left out: it needs a parser per
+  framework and breaks easily.
+- **Picked endpoints are filled in, not sent**: required params and
+  headers on, optional ones off; the body is the spec's example or one
+  built from its schema (spec key order, zero values, `$ref` and `allOf`
+  followed, recursion cut at depth 8). A non-JSON body only sets
+  Content-Type. A spec without an absolute server gets `{{baseUrl}}` for
+  environments to fill in.
+- **Placeholders block sending**: a `{{variable}}` anywhere in the URL or
+  a `{name}` in its path gives "fill in {id}" instead of a parse error or
+  a request to `/users/%7Bid%7D`. Braces in the query (JSON filters) are
+  fine.
+- **The list filters by words**: every word typed must appear in the
+  method, path, name or file; predictable, unlike fuzzy matching.
 - **Params are the URL's query**, as in Postman: the params tab lists it
   raw (nothing decoded), editing a param rewrites it, and typing in the
   URL updates the list. A disabled param keeps its row but leaves the URL.
@@ -207,6 +239,9 @@ internal/tui/
   fields one by one (`GetConn` starts each hop).
 - **`help.ShortHelpView` can exceed its width** when not even "…" fits,
   so `Help.Hints` cuts the result explicitly.
+- **Tests never reach the network.** Send only to `httptest` servers; a
+  spec or URL that a test only loads must point at `127.0.0.1:1`, so a
+  broken assertion can't send a request to a real host.
 - **`TestViewFitsWindow`** checks every mode at many sizes, down to 1×1:
   exactly the window's height, never wider. Keep it passing on any layout
   change, and add new modes to it.
@@ -221,8 +256,10 @@ Measured with `make bench` (Intel Core Ultra 7 268V). Keep within ~2×.
 | Package init, whole binary | ~1 ms | — |
 | `format.New`, 1 MiB compact JSON (indent, split, sanitize) | ~13 ms | background |
 | Highlight one 256-line chunk | ~20 µs | UI goroutine |
-| Keypress + full 220×60 frame, 2 MiB JSON response | ~45 µs | UI goroutine |
+| Keypress + full 220×60 frame, 2 MiB JSON response | ~48 µs | UI goroutine |
 | `Engine.Do`, 64 KiB body, pooled local connection | ~0.2 ms | background |
+| Parse an OpenAPI spec, 1,000 operations (~190 KiB YAML) | ~13 ms | background |
+| Search a home directory (stops at 20,000 entries) | ~80 ms | background |
 
 Anything proportional to body size belongs in the `tea.Cmd`, not in
 `Update` or `View`.
@@ -263,16 +300,14 @@ status bar, help overlay and minimum size; method + URL editor; engine with
 timing and cancellation; response viewer with highlighted JSON, headers
 and a timing waterfall.
 
-Done since: params, headers and body tabs in the request editor.
+Released as `v0.2.0`: params, headers and body tabs in the request editor.
+
+Done since: endpoint discovery (OpenAPI and `.http` files) and the `ctrl+p`
+endpoint list.
 
 Next, in order (agreed with the owner):
-1. Endpoint discovery: `internal/core/discover` finds OpenAPI specs (JSON
-   and YAML) and `.http` files in the working directory, in a `tea.Cmd`,
-   skipping `.git`, `node_modules`, `vendor` and the like. A `ctrl+p`
-   overlay lists the endpoints, filtered as you type; `enter` loads one
-   into the editor. Typing any URL keeps working.
-2. History in `$XDG_CACHE_HOME/quest/`, per project directory (nothing is
+1. History in `$XDG_CACHE_HOME/quest/`, per project directory (nothing is
    written into the repo); the picker shows each endpoint's last status
    and response time.
-3. Environments: `{{var}}` interpolation in URL, params, headers and
+2. Environments: `{{var}}` interpolation in URL, params, headers and
    body; base URLs seeded from OpenAPI `servers`; `e` to switch.

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Methods are the supported HTTP methods, in the order the UI cycles them.
@@ -44,6 +45,7 @@ var (
 	ErrNoHost        = errors.New("url has no host")
 	ErrEmptyKey      = errors.New("empty name")
 	ErrInvalidHeader = errors.New("invalid header")
+	ErrPlaceholder   = errors.New("fill in")
 )
 
 // Validate reports the first problem that would stop r from being sent.
@@ -80,6 +82,9 @@ func (r Request) FullURL() (*url.URL, error) {
 	if raw == "" {
 		return nil, ErrNoURL
 	}
+	if p := placeholder(raw); p != "" {
+		return nil, fmt.Errorf("%w %s", ErrPlaceholder, p)
+	}
 	if !strings.Contains(raw, "://") {
 		raw = "http://" + raw
 	}
@@ -107,4 +112,35 @@ func (r Request) FullURL() (*url.URL, error) {
 	}
 	u.RawQuery = q.Encode()
 	return u, nil
+}
+
+// placeholder returns the first placeholder left in a URL: a {{variable}}
+// anywhere, or an OpenAPI path parameter such as {id} before the query.
+// Sent as is, they would fail with a confusing parse error or a 404.
+func placeholder(u string) string {
+	if i := strings.Index(u, "{{"); i >= 0 {
+		if j := strings.Index(u[i:], "}}"); j >= 0 {
+			return u[i : i+j+2]
+		}
+	}
+	path, _, _ := strings.Cut(u, "?")
+	path, _, _ = strings.Cut(path, "#")
+	for {
+		i := strings.IndexByte(path, '{')
+		if i < 0 {
+			return ""
+		}
+		j := strings.IndexByte(path[i:], '}')
+		if j < 0 {
+			return ""
+		}
+		if name := path[i+1 : i+j]; name != "" && strings.IndexFunc(name, notNameRune) < 0 {
+			return path[i : i+j+1]
+		}
+		path = path[i+1:]
+	}
+}
+
+func notNameRune(r rune) bool {
+	return r != '_' && r != '-' && r != '.' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
 }

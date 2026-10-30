@@ -9,14 +9,18 @@ the response, all without leaving the keyboard.
 <!-- screenshot / GIF goes here -->
 
 > **Status: early development (v0.x).** The core loop works: edit a
-> request with its params, headers and body, send it, inspect the
-> response. Finding a project's endpoints, history and environments are
-> next. Expect changes between versions.
+> request with its params, headers and body (or pick one of your
+> project's endpoints), send it, inspect the response. History and
+> environments are next. Expect changes between versions.
 
 ## Features
 
 Working now:
 
+- Run quest in a project and press `ctrl+p` to pick from its endpoints,
+  found in OpenAPI specs (2.0 and 3.x, JSON or YAML) and `.http`/`.rest`
+  files. Filter by typing; `enter` loads the method, URL, params, headers
+  and an example body into the editor. Typing any URL works as before
 - GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS, always in view and
   picked with the arrow keys, with timeouts and redirects
 - Query params, headers and a request body, each in its own tab. Params
@@ -39,9 +43,7 @@ Working now:
 
 Planned:
 
-- Run quest in a project and pick from its endpoints, found in OpenAPI
-  specs and `.http` files, each with its last response time
-- Request history
+- Request history, with each endpoint's last response time in the list
 - Environments with `{{variable}}` interpolation
 
 ## Install
@@ -66,6 +68,8 @@ make build    # writes bin/quest
 |---|---|
 | `enter` (in the URL) / `ctrl+s` | send |
 | `esc` / `ctrl+c` while sending | cancel the request |
+| `ctrl+p` | endpoints of the project, from anywhere |
+| `enter` / `↑` `↓` / `esc` (in the endpoint list) | load / select / close; typing filters |
 | `ctrl+t` | cycle the method, from anywhere |
 | `←` `→` / `h` `l` (on the method row) | pick the method |
 | `enter` (on the method row) | edit the url |
@@ -85,6 +89,23 @@ make build    # writes bin/quest
 | `q` (`ctrl+c` while typing) | quit |
 
 Planned: `e` environments.
+
+## Endpoints in your project
+
+quest looks for endpoints in the directory it starts in and below,
+skipping dot-directories, `node_modules`, `vendor`, `dist`, `build` and
+`target`:
+
+- **OpenAPI / Swagger specs**, by name (`openapi.yaml`, `swagger.json`,
+  `petstore.openapi.yml`) or by an `openapi:` / `swagger:` key at the top.
+  Required query and header params are switched on, optional ones off;
+  the body comes from the spec's example or is built from its schema.
+- **`.http` and `.rest` files**, as used by the VS Code REST Client and
+  JetBrains: requests separated by `###`, with `@name = value` variables.
+
+A spec without an absolute server URL gets `{{baseUrl}}`, and path
+parameters stay as `{id}`: quest asks you to fill them in before sending.
+Nothing is sent until you press `enter`.
 
 ## Logs
 

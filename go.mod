@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/muesli/termenv v0.16.0
 	github.com/skinleak/gloq v1.2.0
+	go.yaml.in/yaml/v3 v3.0.5
 )
 
 require (

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -45,7 +46,11 @@ func run() int {
 	// and the first render stalls until the query times out.
 	lipgloss.HasDarkBackground()
 
-	m := app.New(engine.New(engine.Options{}), log)
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
+	m := app.New(engine.New(engine.Options{}), log, root, displayDir(root))
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
 		log.Error("program failed", "error", err)
 		fmt.Fprintln(os.Stderr, "quest:", err)
@@ -86,4 +91,19 @@ func openLog() (*os.File, *slog.Logger) {
 		return nil, slog.New(gloq.NewHandler(io.Discard, opts...))
 	}
 	return f, slog.New(gloq.NewHandler(f, opts...))
+}
+
+// displayDir shows dir with the home directory as "~".
+func displayDir(dir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return dir
+	}
+	if dir == home {
+		return "~"
+	}
+	if rest, ok := strings.CutPrefix(dir, home+string(filepath.Separator)); ok {
+		return "~" + string(filepath.Separator) + rest
+	}
+	return dir
 }
